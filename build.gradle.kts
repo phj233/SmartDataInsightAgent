@@ -1,0 +1,64 @@
+plugins {
+    kotlin("jvm") version "1.9.25"
+    kotlin("plugin.spring") version "1.9.25"
+    id("org.springframework.boot") version "3.5.9"
+    id("io.spring.dependency-management") version "1.1.7"
+    id("org.graalvm.buildtools.native") version "0.10.6"
+    id("com.google.devtools.ksp") version "1.9.25-1.0.20"
+}
+
+group = "top.phj233"
+version = "0.0.1-SNAPSHOT"
+description = "SmartDataInsightAgent"
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+    maven { url = uri("https://maven.aliyun.com/repository/public/") }
+    maven { url = uri("https://mirrors.tencent.com/nexus/repository/maven-public") }
+}
+val jimmerVersion = "0.9.120"
+val springAiVersion = "1.1.2"
+
+dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.springframework.ai:spring-ai-starter-model-deepseek")
+    developmentOnly("org.springframework.boot:spring-boot-devtools")
+    developmentOnly("org.springframework.boot:spring-boot-docker-compose")
+    ksp("org.babyfish.jimmer:jimmer-ksp:${jimmerVersion}")
+    implementation("org.babyfish.jimmer:jimmer-spring-boot-starter:${jimmerVersion}")
+    implementation("cn.dev33:sa-token-spring-boot3-starter:1.44.0")
+    runtimeOnly("org.postgresql:postgresql")
+    developmentOnly("org.springframework.ai:spring-ai-spring-boot-docker-compose")
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+dependencyManagement {
+    imports {
+        mavenBom("org.springframework.ai:spring-ai-bom:${springAiVersion}")
+    }
+}
+
+kotlin {
+    sourceSets.main {
+        kotlin.srcDir("build/generated/ksp/main/kotlin")
+    }
+    compilerOptions {
+        freeCompilerArgs.addAll("-Xjsr305=strict")
+    }
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
+}

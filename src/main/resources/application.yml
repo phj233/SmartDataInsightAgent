@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: SmartDataInsightAgent
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      chat:
+        options:
+          temperature: 0.1
+          max-tokens: 2500
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://192.168.31.55:5432/data_insight
+    username: phj233
+    password: phj123+-/
+jimmer:
+  language: kotlin
+  dialect: org.babyfish.jimmer.sql.dialect.PostgresDialect
+  pretty-sql: true
+  show-sql: true
