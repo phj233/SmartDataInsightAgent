@@ -45,6 +45,9 @@ class QueryParserAgent(
             return sql
         }
 
+    /**
+     * 简单的SQL安全检查，防止生成潜在危险的SQL语句
+     */
     fun validateSQL(sql: String) {
         // 防止SQL注入
         val dangerousPatterns = listOf("DROP", "DELETE", "UPDATE", "INSERT", "--", ";")

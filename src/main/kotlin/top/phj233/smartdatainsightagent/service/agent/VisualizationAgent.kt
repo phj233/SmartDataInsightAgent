@@ -1,6 +1,8 @@
 package top.phj233.smartdatainsightagent.service.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import top.phj233.smartdatainsightagent.model.visualization.ChartRecommendation
 import top.phj233.smartdatainsightagent.model.visualization.DataSchema
@@ -18,7 +20,8 @@ import java.util.*
 @Service
 class VisualizationAgent(
     private val deepseekService: DeepseekService,
-    private val objectMapper: ObjectMapper
+    private val objectMapper: ObjectMapper,
+    private val log:Logger = LoggerFactory.getLogger(VisualizationAgent::class.java)
 ) {
     /**
      * 生成可视化建议及完整的 ECharts 配置
@@ -95,12 +98,17 @@ class VisualizationAgent(
                 objectMapper.typeFactory.constructCollectionType(List::class.java, ChartRecommendation::class.java)
             )
         } catch (e: Exception) {
-            println("Visualization AI parse error: ${e.message}")
+            log.error("VisualizationAgent 获取 AI 推荐失败，使用降级策略 fallbackRecommendation", e)
             // 降级策略：默认取第一个字符串字段做维度，第一个数字字段做指标
             fallbackRecommendation(schema)
         }
     }
 
+    /**
+     * 降级策略：当 AI 推荐失败时，基于简单规则生成一个默认的图表建议
+      - 维度：优先选择 STRING 或 DATE 类型的字段
+      - 指标：优先选择 NUMERIC 类型的字段
+     */
     private fun fallbackRecommendation(schema: List<DataSchema>): List<ChartRecommendation> {
         val dim = schema.find { it.fieldType == "STRING" || it.fieldType == "DATE" }?.fieldName ?: return emptyList()
         val met = schema.find { it.fieldType == "NUMERIC" }?.fieldName ?: return emptyList()
