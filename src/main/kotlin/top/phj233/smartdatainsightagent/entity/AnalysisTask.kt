@@ -26,12 +26,18 @@ interface AnalysisTask {
     @Column(name = "generated_sql")
     val generatedSql: String?
 
-    // 任务参数 JSON
+    /**
+     * 任务参数 JSON
+     * */
+    @Serialized
     val parameters: String?
 
     val status: AnalysisStatus
 
-    // 分析结果 JSON (包含数据摘要、洞察等)
+    /**
+     * 分析结果 JSON (包含数据摘要、洞察等)
+     */
+    @Serialized
     val result: String?
 
     val executionTime: Long?

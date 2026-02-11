@@ -1,7 +1,7 @@
 package top.phj233.smartdatainsightagent.model.visualization
 
 /**
- * 最终返回给前端的结构
+ * 最终返回给前端的 ECharts 配置 (结构化输出)
  */
 data class EChartsVisualization(
     val type: String,         // 图表类型：line, bar, pie, scatter, map 等
