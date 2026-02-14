@@ -34,14 +34,20 @@ dependencies {
     implementation("org.springframework.ai:spring-ai-starter-model-deepseek")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
     developmentOnly("org.springframework.boot:spring-boot-docker-compose")
-    ksp("org.babyfish.jimmer:jimmer-ksp:${jimmerVersion}")
-    implementation("org.babyfish.jimmer:jimmer-spring-boot-starter:${jimmerVersion}")
-    implementation("cn.dev33:sa-token-spring-boot3-starter:1.44.0")
-    runtimeOnly("org.postgresql:postgresql")
     developmentOnly("org.springframework.ai:spring-ai-spring-boot-docker-compose")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    runtimeOnly("org.postgresql:postgresql")
+    //jimmer
+    ksp("org.babyfish.jimmer:jimmer-ksp:${jimmerVersion}")
+    implementation("org.babyfish.jimmer:jimmer-spring-boot-starter:${jimmerVersion}")
+    //sa-token
+    implementation("cn.dev33:sa-token-spring-boot3-starter:1.44.0")
+    implementation("cn.dev33:sa-token-redis-template:1.44.0")
+    implementation("org.apache.commons:commons-pool2")
+    implementation("cn.dev33:sa-token-jwt:1.44.0")
+    implementation ("cn.hutool:hutool-all:5.8.26")
 }
 
 dependencyManagement {

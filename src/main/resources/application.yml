@@ -13,8 +13,31 @@ spring:
     url: jdbc:postgresql://192.168.31.55:5432/data_insight?currentSchema=public&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
     username: phj233
     password: phj123+-/
+  data:
+    redis:
+        repositories:
+            enabled: false
+        database: 1
+        connect-timeout: 3000
+        timeout: 3000
+        host: 192.168.31.55
+        lettuce:
+          pool:
+            # 连接池最大连接数
+            max-active: 200
+            # 连接池最大阻塞等待时间（使用负值表示没有限制）
+            max-wait: -1ms
+            # 连接池中的最大空闲连接
+            max-idle: 10
+            # 连接池中的最小空闲连接
+            min-idle: 0
 jimmer:
   language: kotlin
   dialect: org.babyfish.jimmer.sql.dialect.PostgresDialect
   pretty-sql: true
   show-sql: true
+
+sa-token:
+  token-style: tik
+  auto-renew: true
+  timeout: 604800
