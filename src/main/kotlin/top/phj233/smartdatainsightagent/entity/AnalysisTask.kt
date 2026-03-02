@@ -2,6 +2,7 @@ package top.phj233.smartdatainsightagent.entity
 
 import org.babyfish.jimmer.sql.*
 import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
+import top.phj233.smartdatainsightagent.model.AnalysisResult
 import java.time.LocalDateTime
 
 /**
@@ -11,12 +12,16 @@ import java.time.LocalDateTime
  */
 @Entity
 @Table(name = "analysis_tasks")
-interface AnalysisTask {
+interface AnalysisTask: BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long
 
-    val userId: String
+    @IdView
+    val userId: Long
+
+    @ManyToOne
+    val user: User
 
     // 用户输入的原始查询
     @Column(name = "original_query")
@@ -30,7 +35,7 @@ interface AnalysisTask {
      * 任务参数 JSON
      * */
     @Serialized
-    val parameters: String?
+    val parameters: List<Map<String, Any>>
 
     val status: AnalysisStatus
 
@@ -38,7 +43,7 @@ interface AnalysisTask {
      * 分析结果 JSON (包含数据摘要、洞察等)
      */
     @Serialized
-    val result: String?
+    val result: List<AnalysisResult>?
 
     val executionTime: Long?
 
