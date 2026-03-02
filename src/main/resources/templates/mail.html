@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmartDataInsight 验证码</title>
+  <style>
+    body { margin: 0; padding: 0; background: #f6f8fc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif; color: #0f172a; }
+    .container { max-width: 640px; margin: 0 auto; padding: 32px 16px 48px; }
+    .card { background: #ffffff; border-radius: 16px; padding: 0; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08); overflow: hidden; border: 1px solid #e6edf7; }
+    .header {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+      padding: 32px 24px 28px;
+      color: #ffffff;
+      text-align: center;
+      position: relative;
+    }
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: -20px;
+      background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.3), transparent 55%),
+                  radial-gradient(circle at 70% 10%, rgba(255, 255, 255, 0.18), transparent 50%);
+      filter: blur(18px);
+      opacity: 0.75;
+      pointer-events: none;
+    }
+    .header::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.18), transparent 45%),
+                  radial-gradient(circle at 80% 0%, rgba(255, 255, 255, 0.12), transparent 40%);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+    .header > * { position: relative; z-index: 1; }
+    .logo { width: 44px; height: 44px; line-height: 44px; border-radius: 999px; display: inline-block; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.35); font-weight: 700; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .brand { font-size: 19px; font-weight: 700; letter-spacing: 0.4px; margin: 0; }
+    .badge { display: inline-block; font-size: 12px; padding: 4px 10px; border-radius: 999px; margin-top: 8px; background: rgba(255, 255, 255, 0.18); border: 1px solid rgba(255, 255, 255, 0.35); }
+    .content { padding: 28px 28px 30px; }
+    .title { font-size: 20px; font-weight: 700; margin: 0 0 8px; }
+    .subtitle { font-size: 14px; color: #475569; margin: 0 0 20px; line-height: 1.7; }
+    .code-wrap { background: #f3f0ff; border: 1px dashed #c4b5fd; padding: 16px 18px; border-radius: 12px; text-align: center; }
+    .code { font-size: 30px; letter-spacing: 8px; font-weight: 700; color: #7c3aed; font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .tip { font-size: 12px; color: #64748b; margin-top: 16px; line-height: 1.7; }
+    .divider { height: 1px; background: #e2e8f0; margin: 20px 0; }
+    .footer { font-size: 12px; color: #94a3b8; margin-top: 22px; text-align: center; }
+
+    @media (max-width: 480px) {
+      .container { padding: 20px 12px 32px; }
+      .card { border-radius: 12px; }
+      .header { padding: 24px 16px 20px; }
+      .logo { width: 40px; height: 40px; line-height: 40px; }
+      .brand { font-size: 18px; }
+      .content { padding: 22px 18px 24px; }
+      .title { font-size: 18px; }
+      .code { font-size: 26px; letter-spacing: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <span class="logo">SD</span>
+        <p class="brand">SmartDataInsight</p>
+        <span class="badge">验证码</span>
+      </div>
+      <div class="content">
+        <p class="title">Hi, {username}</p>
+        <p class="subtitle">请使用以下验证码完成验证，验证码 5 分钟内有效：</p>
+        <div class="code-wrap">
+          <div class="code">{code}</div>
+        </div>
+        <div class="divider"></div>
+        <p class="tip">如果不是你本人操作，请忽略本邮件，无需任何操作。</p>
+      </div>
+    </div>
+    <div class="footer">本邮件为系统自动发送，请勿回复</div>
+  </div>
+</body>
+</html>
+

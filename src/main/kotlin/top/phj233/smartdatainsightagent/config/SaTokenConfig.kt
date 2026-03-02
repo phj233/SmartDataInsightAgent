@@ -15,6 +15,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 import org.springframework.web.filter.CorsFilter
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
+import top.phj233.smartdatainsightagent.repository.UserRepository
 
 /**
  * @author phj233
@@ -49,18 +50,13 @@ class SaTokenConfig : WebMvcConfigurer {
 }
 
 @Component
-class StpInterFaceImpl: StpInterface{
+class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
     val logger: Logger = LoggerFactory.getLogger(this::class.java)
     override fun getPermissionList(
         loginId: Any?,
         loginType: String?
     ): List<String?>? {
-        logger.info("""
-            -----已进入 StpInterFaceImpl.getPermissionList 方法-----
-            loginId: $loginId - loginType: $loginType
-            tokenInfo： ${StpUtil.getTokenInfo()}
-            """.trimIndent())
-        return listOf(StpUtil.getExtra("permission").toString())
+        TODO()
     }
 
     override fun getRoleList(
@@ -72,6 +68,13 @@ class StpInterFaceImpl: StpInterface{
             loginId: $loginId - loginType: $loginType
             tokenInfo： ${StpUtil.getTokenInfo()}
             """.trimIndent())
-        return listOf(StpUtil.getExtra("role").toString())
+        userRepository.findUserRolesById(loginId as Long).flatMap {
+            it.roles.map { role ->
+                role.name
+            }
+        }.also {
+            logger.info("${StpUtil.getLoginId()} 用户角色列表：$it")
+            return it
+        }
     }
 }

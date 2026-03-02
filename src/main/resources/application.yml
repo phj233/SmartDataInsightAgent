@@ -31,6 +31,13 @@ spring:
             max-idle: 10
             # 连接池中的最小空闲连接
             min-idle: 0
+  main:
+    allow-bean-definition-overriding: true
+  mail:
+    host: smtp.office365.com
+    port: 587
+    username: data-insight@phj233.top
+    password: DataInsight123456
 jimmer:
   language: kotlin
   dialect: org.babyfish.jimmer.sql.dialect.PostgresDialect
