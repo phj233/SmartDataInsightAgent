@@ -1,0 +1,25 @@
+export top.phj233.smartdatainsightagent.entity.User
+ -> package top.phj233.smartdatainsightagent.entity.dto
+import org.springframework.validation.annotation.Validated
+import jakarta.validation.constraints.Email
+import jakarta.validation.constraints.Size
+
+input UserLoginDTO {
+    username?
+    password?
+    @Email(message = "邮箱格式错误")
+    email?
+    code : String?
+}
+input UserLoginByCodeDTO {
+    code: String
+    @Email(message = "邮箱格式错误")
+    email: String
+}
+input UserRegisterDTO {
+    @Size(min = 6, max = 32, message = "用户名长度必须在6-32之间")
+    username
+    password
+    email
+    code: String
+}

@@ -1,9 +1,6 @@
 package top.phj233.smartdatainsightagent.entity
 
-import org.babyfish.jimmer.sql.Entity
-import org.babyfish.jimmer.sql.GeneratedValue
-import org.babyfish.jimmer.sql.GenerationType
-import org.babyfish.jimmer.sql.Id
+import org.babyfish.jimmer.sql.*
 
 /**
  * 用户实体
@@ -12,17 +9,20 @@ import org.babyfish.jimmer.sql.Id
  * @version
  */
 @Entity
-interface User {
+interface User: BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long
 
-    val roleId: Long
+
+    @ManyToMany
+    val roles: List<Role>
 
     val username: String
 
     val password: String
 
+    @Key
     val email: String
 
     val enabled: Boolean
