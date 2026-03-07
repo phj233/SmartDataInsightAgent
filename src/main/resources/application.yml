@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:classpath:application-secrets.yml
   application:
     name: SmartDataInsightAgent
   ai:
@@ -10,9 +12,9 @@ spring:
           max-tokens: 2500
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://192.168.31.55:5432/data_insight?currentSchema=public&useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
-    username: phj233
-    password: phj123+-/
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   data:
     redis:
         repositories:
@@ -20,7 +22,7 @@ spring:
         database: 1
         connect-timeout: 3000
         timeout: 3000
-        host: 192.168.31.55
+        host: ${REDIS_HOST}
         lettuce:
           pool:
             # 连接池最大连接数
@@ -36,8 +38,8 @@ spring:
   mail:
     host: smtp.office365.com
     port: 587
-    username: data-insight@phj233.top
-    password: DataInsight123456
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
 jimmer:
   language: kotlin
   dialect: org.babyfish.jimmer.sql.dialect.PostgresDialect
