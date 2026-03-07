@@ -39,8 +39,11 @@ dependencies {
     developmentOnly("org.springframework.ai:spring-ai-spring-boot-docker-compose")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+    testImplementation("org.mockito:mockito-inline:5.2.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     runtimeOnly("org.postgresql:postgresql")
+    runtimeOnly("com.mysql:mysql-connector-j")
     //jimmer
     ksp("org.babyfish.jimmer:jimmer-ksp:${jimmerVersion}")
     implementation("org.babyfish.jimmer:jimmer-spring-boot-starter:${jimmerVersion}")
@@ -49,7 +52,7 @@ dependencies {
     implementation("cn.dev33:sa-token-redis-template:1.44.0")
     implementation("org.apache.commons:commons-pool2")
     implementation("cn.dev33:sa-token-jwt:1.44.0")
-    implementation ("cn.hutool:hutool-all:5.8.26")
+    implementation ("cn.hutool:hutool-all:5.8.40")
 }
 
 dependencyManagement {
