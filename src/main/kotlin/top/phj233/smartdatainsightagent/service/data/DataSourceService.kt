@@ -18,10 +18,22 @@ class DataSourceService(
             ?: throw IllegalArgumentException("DataSource not found: $id")
     }
 
-    // 这里通常需要根据 DataSource 配置动态创建 JDBC 连接
-    // 为了简化，假设我们返回当前的 Connection 或者根据配置构建
-    fun getConnectionDetails(dataSourceId: Long): Map<String, String> {
-        // 实现获取连接信息的逻辑
-        return emptyMap()
+    fun getActiveDataSource(id: Long): DataSource {
+        val dataSource = getDataSource(id)
+        require(dataSource.active) { "DataSource is inactive: $id" }
+        return dataSource
+    }
+
+    fun getAccessibleActiveDataSource(id: Long, userId: Long): DataSource {
+        val dataSource = getActiveDataSource(id)
+        require(dataSource.userId == userId) { "DataSource access denied: $id" }
+        return dataSource
+    }
+
+    // 这里根据 DataSource 配置动态创建 JDBC 连接
+    fun getConnectionDetails(dataSourceId: Long, userId: Long? = null): Map<String, String> {
+        val dataSource = userId?.let { getAccessibleActiveDataSource(dataSourceId, it) }
+            ?: getActiveDataSource(dataSourceId)
+        return ExternalDataSourceSupport.flattenConnectionConfig(dataSource.connectionConfig)
     }
 }

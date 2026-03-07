@@ -1,5 +1,6 @@
 package top.phj233.smartdatainsightagent.service.agent
 
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
@@ -10,7 +11,9 @@ import top.phj233.smartdatainsightagent.model.AnalysisRequest
 import top.phj233.smartdatainsightagent.model.AnalysisResult
 import top.phj233.smartdatainsightagent.model.Intent
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
+import top.phj233.smartdatainsightagent.service.data.NaturalLanguageDataExtractionService
 import top.phj233.smartdatainsightagent.service.data.QueryExecutorService
+import top.phj233.smartdatainsightagent.service.data.RawTextDataParserService
 
 @Service
 /**
@@ -24,12 +27,18 @@ class DataAnalysisAgent(
     private val visualizationAgent: VisualizationAgent,
     private val deepseekService: DeepseekService,
     private val queryExecutorService: QueryExecutorService,
+    private val rawTextDataParserService: RawTextDataParserService,
+    private val naturalLanguageDataExtractionService: NaturalLanguageDataExtractionService,
     private val objectMapper: ObjectMapper,
     private val log: Logger = LoggerFactory.getLogger(DataAnalysisAgent::class.java)
 ) {
 
     @Transactional
     suspend fun analyzeData(request: AnalysisRequest): AnalysisResult {
+        if (request.dataSourceId == null) {
+            return processRawTextData(request)
+        }
+
         // 1. 理解用户意图
         val intent = understandIntent(request.query)
 
@@ -84,8 +93,9 @@ class DataAnalysisAgent(
       - 洞察生成提示词：明确告知 AI 关注点，避免泛泛而谈
      */
     private suspend fun processDataQuery(request: AnalysisRequest): AnalysisResult {
-        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, request.dataSourceId)
-        val data = queryExecutorService.executeQuery(sqlQuery)
+        val dataSourceId = requireDataSourceId(request)
+        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, dataSourceId, request.userId)
+        val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
         val insights = generateInsights(data, request.query, "简明扼要地回答用户问题。")
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
 
@@ -101,9 +111,10 @@ class DataAnalysisAgent(
       - 可视化建议提示词：明确告知 AI 用户关注时间趋势分析，建议优先使用折线图(line)或面积图，引导其选择更合适的图表类型
      */
     private suspend fun processTrendAnalysis(request: AnalysisRequest): AnalysisResult {
+        val dataSourceId = requireDataSourceId(request)
         val enhancedQuery = "${request.query}。请务必按时间维度（如日、月、年）进行分组统计，并按时间排序。"
-        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(enhancedQuery, request.dataSourceId)
-        val data = queryExecutorService.executeQuery(sqlQuery)
+        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(enhancedQuery, dataSourceId, request.userId)
+        val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
 
         val insights = generateInsights(data, request.query, "重点分析数据的变化趋势、增长率、峰值和异常波动。")
         // 提示词增强：明确告知 AI 用户关注的是"趋势"，引导其选择 Line/Area 图表
@@ -120,9 +131,10 @@ class DataAnalysisAgent(
      * @return AnalysisResult 包含历史数据和预测数据的完整数据集、预测洞察、可视化建议和执行的 SQL 语句
      */
     private suspend fun processPrediction(request: AnalysisRequest): AnalysisResult {
+        val dataSourceId = requireDataSourceId(request)
         val historyQuery = "${request.query}。请获取相关的历史时间序列数据用于预测。"
-        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(historyQuery, request.dataSourceId)
-        val historyData = queryExecutorService.executeQuery(sqlQuery)
+        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(historyQuery, dataSourceId, request.userId)
+        val historyData = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
 
         if (historyData.isEmpty()) {
             return AnalysisResult(emptyList(), "没有足够的历史数据进行预测。", emptyList(), sqlQuery)
@@ -141,8 +153,14 @@ class DataAnalysisAgent(
         val predictedDataString = deepseekService.chatCompletion(predictionPrompt) ?: "[]"
 
         val finalData = try {
-            objectMapper.readValue(predictedDataString, List::class.java) as List<Map<String, Any>>
-        } catch (e: Exception) {
+            val parsed: List<Map<String, Any?>> = objectMapper.readValue(
+                predictedDataString,
+                object : TypeReference<List<Map<String, Any?>>>() {}
+            )
+            parsed.map { row ->
+                row.mapValues { (_, value) -> value ?: "" }
+            }
+        } catch (_: Exception) {
             historyData
         }
 
@@ -162,9 +180,10 @@ class DataAnalysisAgent(
      * @return AnalysisResult 包含查询结果、完整分析报告、可视化建议
      */
     private suspend fun processReportGeneration(request: AnalysisRequest): AnalysisResult {
+        val dataSourceId = requireDataSourceId(request)
         // 1. 执行宽泛的查询以获取全面数据
-        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, request.dataSourceId)
-        val data = queryExecutorService.executeQuery(sqlQuery)
+        val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, dataSourceId, request.userId)
+        val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
 
         // 2. 生成详细报告
         val reportPrompt = """
@@ -207,5 +226,26 @@ class DataAnalysisAgent(
             数据样本: ${data.take(20)}
         """.trimIndent()
         return deepseekService.chatCompletion(prompt) ?: "暂无洞察。"
+    }
+
+    // --- 5. 原始文本数据分析 ---
+    /**
+     * 处理原始文本数据，直接对用户提供的表格数据进行分析
+     * @param request 包含用户查询和数据源信息的请求对象
+     * @return AnalysisResult 包含分析结果、洞察和可视化建议
+     */
+    private suspend fun processRawTextData(request: AnalysisRequest): AnalysisResult {
+        val data = try {
+            rawTextDataParserService.parse(request.query)
+        } catch (_: IllegalArgumentException) {
+            naturalLanguageDataExtractionService.extract(request.query)
+        }
+        val insights = generateInsights(data, request.query, "用户直接提供了原始数据或自然语言描述，请提炼关键结论，并指出最值得关注的对比、趋势或异常。")
+        val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
+        return AnalysisResult(data, insights, visualizations, null)
+    }
+
+    private fun requireDataSourceId(request: AnalysisRequest): Long {
+        return requireNotNull(request.dataSourceId) { "dataSourceId 不能为空" }
     }
 }
