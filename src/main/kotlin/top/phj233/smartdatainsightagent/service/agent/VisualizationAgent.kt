@@ -49,7 +49,8 @@ class VisualizationAgent(
         return firstRow.map { (key, value) ->
             val type = when (value) {
                 is Number -> "NUMERIC"
-                is Temporal, is Date -> "DATE"
+                is Temporal,
+                is Date -> "DATE"
                 else -> "STRING"
             }
             DataSchema(key, type, value)
