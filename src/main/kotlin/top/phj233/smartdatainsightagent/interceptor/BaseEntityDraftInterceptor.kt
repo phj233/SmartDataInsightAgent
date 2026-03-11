@@ -6,19 +6,18 @@ import org.babyfish.jimmer.sql.DraftInterceptor
 import org.springframework.stereotype.Component
 import top.phj233.smartdatainsightagent.entity.BaseEntity
 import top.phj233.smartdatainsightagent.entity.BaseEntityDraft
-import top.phj233.smartdatainsightagent.repository.UserRepository
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 
 /**
+ * BaseEntityDraftInterceptor
+ * 用于在保存继承了 BaseEntity的实体时自动设置 createdTimeStamp、createdBy、modifiedTimeStamp 和 modifiedBy 字段。
  * @author phj233
  * @since 2026/2/11 20:07
  * @version
  */
 @Component
-class BaseEntityDraftInterceptor(
-    private val userRepository: UserRepository,
-) : DraftInterceptor<BaseEntity, BaseEntityDraft> {
+class BaseEntityDraftInterceptor : DraftInterceptor<BaseEntity, BaseEntityDraft> {
 
     override fun beforeSave(draft: BaseEntityDraft, original: BaseEntity?) {
         if (!isLoaded(draft, BaseEntity::modifiedTimeStamp)) {
