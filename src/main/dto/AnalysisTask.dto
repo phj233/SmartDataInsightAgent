@@ -1,0 +1,29 @@
+export top.phj233.smartdatainsightagent.entity.AnalysisTask
+ -> package top.phj233.smartdatainsightagent.entity.dto
+
+input AnalysisTaskCreateInput {
+    originalQuery
+}
+
+AnalysisTaskSummaryView {
+    id
+    userId
+    originalQuery
+    status
+    executionTime
+    errorMessage
+}
+
+AnalysisTaskDetailView {
+    id
+    userId
+    originalQuery
+    generatedSql
+    parameters
+    status
+    result
+    executionTime
+    errorMessage
+}
+
+

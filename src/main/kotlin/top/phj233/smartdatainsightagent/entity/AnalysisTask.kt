@@ -3,7 +3,7 @@ package top.phj233.smartdatainsightagent.entity
 import org.babyfish.jimmer.sql.*
 import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 import top.phj233.smartdatainsightagent.model.AnalysisResult
-import java.time.LocalDateTime
+import top.phj233.smartdatainsightagent.model.AnalysisTaskStageRecord
 
 /**
  * @author phj233
@@ -32,10 +32,10 @@ interface AnalysisTask: BaseEntity {
     val generatedSql: String?
 
     /**
-     * 任务参数 JSON
-     * */
+     * 分析阶段轨迹 JSON
+     */
     @Serialized
-    val parameters: List<Map<String, Any>>
+    val parameters: List<AnalysisTaskStageRecord>
 
     val status: AnalysisStatus
 
@@ -48,10 +48,4 @@ interface AnalysisTask: BaseEntity {
     val executionTime: Long?
 
     val errorMessage: String?
-
-    @Column(name = "created_at")
-    val createdAt: LocalDateTime
-
-    @Column(name = "updated_at")
-    val updatedAt: LocalDateTime
 }
