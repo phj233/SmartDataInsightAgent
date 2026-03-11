@@ -18,6 +18,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 import top.phj233.smartdatainsightagent.repository.UserRepository
 
 /**
+ * SaTokenConfig
+ * - 配置 Sa-Token 的拦截器和权限验证逻辑，以及全局的 CORS 设置。
  * @author phj233
  * @since 2026/2/14 19:38
  * @version
@@ -49,6 +51,13 @@ class SaTokenConfig : WebMvcConfigurer {
     })
 }
 
+/**
+ * StpInterFaceImpl
+ * - 实现 Sa-Token 的 StpInterface 接口，用于提供用户权限和角色信息。
+ * @author phj233
+ * @since 2026/2/14 19:38
+ * @version
+ */
 @Component
 class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
     val logger: Logger = LoggerFactory.getLogger(this::class.java)
