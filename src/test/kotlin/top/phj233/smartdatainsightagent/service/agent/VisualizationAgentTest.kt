@@ -1,11 +1,11 @@
 package top.phj233.smartdatainsightagent.service.agent
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
-import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.mock
-import org.mockito.Mockito.`when`
+import org.springframework.ai.deepseek.DeepSeekChatModel
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
@@ -14,26 +14,23 @@ import kotlin.coroutines.startCoroutine
 class VisualizationAgentTest {
 
     private val objectMapper = jacksonObjectMapper()
-    private val deepseekService = mock(DeepseekService::class.java)
-    private val visualizationAgent = VisualizationAgent(deepseekService, objectMapper)
 
     @Test
     fun `generate echarts option for bar chart recommendation`() {
-        runSuspend {
-            `when`(deepseekService.chatCompletion(anyString())).thenReturn(
-                """
-                [
-                  {
-                    "chartType": "bar",
-                    "title": "各地区销售额对比",
-                    "reason": "用户关注销售对比",
-                    "dimensionField": "region",
-                    "metricFields": ["sales"]
-                  }
-                ]
-                """.trimIndent()
-            )
-        }
+        val deepseekService = FakeDeepseekService(
+            """
+            [
+              {
+                "chartType": "bar",
+                "title": "各地区销售额对比",
+                "reason": "用户关注销售对比",
+                "dimensionField": "region",
+                "metricFields": ["sales"]
+              }
+            ]
+            """.trimIndent()
+        )
+        val visualizationAgent = VisualizationAgent(deepseekService, objectMapper)
 
         val visualizations = runSuspend {
             visualizationAgent.suggestVisualizations(
@@ -70,9 +67,8 @@ class VisualizationAgentTest {
 
     @Test
     fun `fallback still generates echarts option when ai response is invalid`() {
-        runSuspend {
-            `when`(deepseekService.chatCompletion(anyString())).thenReturn("not-json")
-        }
+        val deepseekService = FakeDeepseekService("not-json")
+        val visualizationAgent = VisualizationAgent(deepseekService, objectMapper)
 
         val visualizations = runSuspend {
             visualizationAgent.suggestVisualizations(
@@ -105,5 +101,11 @@ class VisualizationAgentTest {
             }
         })
         return outcome!!.getOrThrow()
+    }
+
+    private class FakeDeepseekService(
+        private val response: String
+    ) : DeepseekService(mock(DeepSeekChatModel::class.java), ObjectMapper()) {
+        override suspend fun chatCompletion(prompt: String): String = response
     }
 }
