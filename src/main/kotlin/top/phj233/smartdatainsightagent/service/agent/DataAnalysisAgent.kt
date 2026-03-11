@@ -2,6 +2,8 @@ package top.phj233.smartdatainsightagent.service.agent
 
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -16,7 +18,7 @@ import top.phj233.smartdatainsightagent.service.data.NaturalLanguageDataExtracti
 import top.phj233.smartdatainsightagent.service.data.QueryExecutorService
 import top.phj233.smartdatainsightagent.service.data.RawTextDataParserService
 
-private typealias StageRecorder = (String, Map<String, Any>, String?) -> Unit
+private typealias StageRecorder = suspend (String, Map<String, Any>, String?) -> Unit
 
 @Service
 /**
@@ -50,13 +52,17 @@ class DataAnalysisAgent(
      */
     @Transactional
     suspend fun analyzeData(request: AnalysisRequest): AnalysisResult {
-        val task = analysisTaskService.createTask(request)
+        val task = withContext(Dispatchers.IO) {
+            analysisTaskService.createTask(request)
+        }
         val startTime = System.currentTimeMillis()
         var lastStage = AnalysisTaskService.STAGE_TASK_CREATED
 
         val recordStage: StageRecorder = { stage, details, generatedSql ->
             lastStage = stage
-            analysisTaskService.markRunning(task.id, stage, details, generatedSql)
+            runBlockingTaskPersistence {
+                analysisTaskService.markRunning(task.id, stage, details, generatedSql)
+            }
         }
 
         return try {
@@ -66,26 +72,36 @@ class DataAnalysisAgent(
                 processStructuredRequest(request, recordStage)
             }
 
-            analysisTaskService.markSuccess(
-                taskId = task.id,
-                result = result,
-                executionTime = System.currentTimeMillis() - startTime,
-                stage = AnalysisTaskService.STAGE_COMPLETED,
-                details = buildMap {
-                    put("dataSourceId", request.dataSourceId?.toString() ?: "RAW_TEXT")
-                    put("resultRowCount", result.data.size)
-                    put("visualizationCount", result.visualizations.size)
-                }
-            )
+            runBlockingTaskPersistence {
+                analysisTaskService.markSuccess(
+                    taskId = task.id,
+                    result = result,
+                    executionTime = System.currentTimeMillis() - startTime,
+                    stage = AnalysisTaskService.STAGE_COMPLETED,
+                    details = buildMap {
+                        put("dataSourceId", request.dataSourceId?.toString() ?: "RAW_TEXT")
+                        put("resultRowCount", result.data.size)
+                        put("visualizationCount", result.visualizations.size)
+                    }
+                )
+            }
             result
         } catch (ex: Exception) {
-            analysisTaskService.markFailed(
-                taskId = task.id,
-                stage = lastStage,
-                errorMessage = ex.message ?: "分析任务执行失败",
-                executionTime = System.currentTimeMillis() - startTime
-            )
+            runBlockingTaskPersistence {
+                analysisTaskService.markFailed(
+                    taskId = task.id,
+                    stage = lastStage,
+                    errorMessage = ex.message ?: "分析任务执行失败",
+                    executionTime = System.currentTimeMillis() - startTime
+                )
+            }
             throw ex
+        }
+    }
+
+    private suspend fun runBlockingTaskPersistence(action: () -> Unit) {
+        withContext(Dispatchers.IO) {
+            action()
         }
     }
 
@@ -427,7 +443,7 @@ class DataAnalysisAgent(
      * @param recordStage 阶段记录函数
      * @param rowCount 当前数据行数
      */
-    private fun recordInsightsStage(recordStage: StageRecorder, rowCount: Int) {
+    private suspend fun recordInsightsStage(recordStage: StageRecorder, rowCount: Int) {
         recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, mapOf("rowCount" to rowCount), null)
     }
 
@@ -438,7 +454,7 @@ class DataAnalysisAgent(
      * @param rowCount 当前数据行数
      * @param queryMode 当前查询模式，用于区分普通查询、趋势分析、预测或原始文本模式
      */
-    private fun recordVisualizationStage(recordStage: StageRecorder, rowCount: Int, queryMode: String) {
+    private suspend fun recordVisualizationStage(recordStage: StageRecorder, rowCount: Int, queryMode: String) {
         recordStage(
             AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
             mapOf("rowCount" to rowCount, "queryMode" to queryMode),
