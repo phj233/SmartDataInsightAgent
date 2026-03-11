@@ -10,10 +10,13 @@ import top.phj233.smartdatainsightagent.entity.enums.IntentType
 import top.phj233.smartdatainsightagent.model.AnalysisRequest
 import top.phj233.smartdatainsightagent.model.AnalysisResult
 import top.phj233.smartdatainsightagent.model.Intent
+import top.phj233.smartdatainsightagent.service.AnalysisTaskService
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
 import top.phj233.smartdatainsightagent.service.data.NaturalLanguageDataExtractionService
 import top.phj233.smartdatainsightagent.service.data.QueryExecutorService
 import top.phj233.smartdatainsightagent.service.data.RawTextDataParserService
+
+private typealias StageRecorder = (String, Map<String, Any>, String?) -> Unit
 
 @Service
 /**
@@ -29,25 +32,71 @@ class DataAnalysisAgent(
     private val queryExecutorService: QueryExecutorService,
     private val rawTextDataParserService: RawTextDataParserService,
     private val naturalLanguageDataExtractionService: NaturalLanguageDataExtractionService,
+    private val analysisTaskService: AnalysisTaskService,
     private val objectMapper: ObjectMapper,
     private val log: Logger = LoggerFactory.getLogger(DataAnalysisAgent::class.java)
 ) {
 
     @Transactional
     suspend fun analyzeData(request: AnalysisRequest): AnalysisResult {
-        if (request.dataSourceId == null) {
-            return processRawTextData(request)
+        val task = analysisTaskService.createTask(request)
+        val startTime = System.currentTimeMillis()
+        var lastStage = AnalysisTaskService.STAGE_TASK_CREATED
+
+        val recordStage: StageRecorder = { stage, details, generatedSql ->
+            lastStage = stage
+            analysisTaskService.markRunning(task.id, stage, details, generatedSql)
         }
 
-        // 1. 理解用户意图
-        val intent = understandIntent(request.query)
+        return try {
+            val result = if (request.dataSourceId == null) {
+                processRawTextData(request, recordStage)
+            } else {
+                recordStage(
+                    AnalysisTaskService.STAGE_INTENT_ANALYZING,
+                    mapOf("query" to request.query),
+                    null
+                )
 
-        // 2. 根据意图选择处理流程
-        return when (intent.type) {
-            IntentType.DATA_QUERY -> processDataQuery(request)
-            IntentType.TREND_ANALYSIS -> processTrendAnalysis(request)
-            IntentType.PREDICTION -> processPrediction(request)
-            IntentType.REPORT_GENERATION -> processReportGeneration(request)
+                val intent = understandIntent(request.query)
+                recordStage(
+                    AnalysisTaskService.STAGE_INTENT_RESOLVED,
+                    buildMap {
+                        put("intentType", intent.type.name)
+                        put("confidence", intent.confidence)
+                        intent.parameters?.takeIf { it.isNotEmpty() }?.let { put("intentParameters", it) }
+                    },
+                    null
+                )
+
+                when (intent.type) {
+                    IntentType.DATA_QUERY -> processDataQuery(request, recordStage)
+                    IntentType.TREND_ANALYSIS -> processTrendAnalysis(request, recordStage)
+                    IntentType.PREDICTION -> processPrediction(request, recordStage)
+                    IntentType.REPORT_GENERATION -> processReportGeneration(request, recordStage)
+                }
+            }
+
+            analysisTaskService.markSuccess(
+                taskId = task.id,
+                result = result,
+                executionTime = System.currentTimeMillis() - startTime,
+                stage = AnalysisTaskService.STAGE_COMPLETED,
+                details = buildMap {
+                    put("dataSourceId", request.dataSourceId?.toString() ?: "RAW_TEXT")
+                    put("resultRowCount", result.data.size)
+                    put("visualizationCount", result.visualizations.size)
+                }
+            )
+            result
+        } catch (ex: Exception) {
+            analysisTaskService.markFailed(
+                taskId = task.id,
+                stage = lastStage,
+                errorMessage = ex.message ?: "分析任务执行失败",
+                executionTime = System.currentTimeMillis() - startTime
+            )
+            throw ex
         }
     }
 
@@ -92,11 +141,29 @@ class DataAnalysisAgent(
      * @return AnalysisResult 包含查询结果、洞察、可视化建议和执行的 SQL 语句
       - 洞察生成提示词：明确告知 AI 关注点，避免泛泛而谈
      */
-    private suspend fun processDataQuery(request: AnalysisRequest): AnalysisResult {
+    private suspend fun processDataQuery(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
         val dataSourceId = requireDataSourceId(request)
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATING,
+            mapOf("analysisType" to IntentType.DATA_QUERY.name, "dataSourceId" to dataSourceId),
+            null
+        )
         val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, dataSourceId, request.userId)
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATED,
+            mapOf("analysisType" to IntentType.DATA_QUERY.name),
+            sqlQuery
+        )
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, mapOf("sqlLength" to sqlQuery.length), null)
         val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, mapOf("rowCount" to data.size), null)
+        recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, mapOf("rowCount" to data.size), null)
         val insights = generateInsights(data, request.query, "简明扼要地回答用户问题。")
+        recordStage(
+            AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
+            mapOf("rowCount" to data.size, "queryMode" to IntentType.DATA_QUERY.name),
+            null
+        )
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
 
         return AnalysisResult(data, insights, visualizations, sqlQuery)
@@ -110,15 +177,32 @@ class DataAnalysisAgent(
       - 洞察生成提示词：明确告知 AI 关注点，指导其分析趋势、增长率、峰值和异常波动，避免泛泛而谈
       - 可视化建议提示词：明确告知 AI 用户关注时间趋势分析，建议优先使用折线图(line)或面积图，引导其选择更合适的图表类型
      */
-    private suspend fun processTrendAnalysis(request: AnalysisRequest): AnalysisResult {
+    private suspend fun processTrendAnalysis(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
         val dataSourceId = requireDataSourceId(request)
         val enhancedQuery = "${request.query}。请务必按时间维度（如日、月、年）进行分组统计，并按时间排序。"
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATING,
+            mapOf("analysisType" to IntentType.TREND_ANALYSIS.name, "dataSourceId" to dataSourceId),
+            null
+        )
         val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(enhancedQuery, dataSourceId, request.userId)
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATED,
+            mapOf("analysisType" to IntentType.TREND_ANALYSIS.name),
+            sqlQuery
+        )
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, mapOf("sqlLength" to sqlQuery.length), null)
         val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
-
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, mapOf("rowCount" to data.size), null)
+        recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, mapOf("rowCount" to data.size), null)
         val insights = generateInsights(data, request.query, "重点分析数据的变化趋势、增长率、峰值和异常波动。")
         // 提示词增强：明确告知 AI 用户关注的是"趋势"，引导其选择 Line/Area 图表
         val vizHint = "用户关注时间趋势分析，建议优先使用折线图(line)或面积图。${request.query}"
+        recordStage(
+            AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
+            mapOf("rowCount" to data.size, "queryMode" to IntentType.TREND_ANALYSIS.name),
+            null
+        )
         val visualizations = visualizationAgent.suggestVisualizations(data, vizHint)
 
         return AnalysisResult(data, insights, visualizations, sqlQuery)
@@ -130,17 +214,34 @@ class DataAnalysisAgent(
      * @param request 包含用户查询和数据源信息的请求对象
      * @return AnalysisResult 包含历史数据和预测数据的完整数据集、预测洞察、可视化建议和执行的 SQL 语句
      */
-    private suspend fun processPrediction(request: AnalysisRequest): AnalysisResult {
+    private suspend fun processPrediction(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
         val dataSourceId = requireDataSourceId(request)
         val historyQuery = "${request.query}。请获取相关的历史时间序列数据用于预测。"
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATING,
+            mapOf("analysisType" to IntentType.PREDICTION.name, "dataSourceId" to dataSourceId),
+            null
+        )
         val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(historyQuery, dataSourceId, request.userId)
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATED,
+            mapOf("analysisType" to IntentType.PREDICTION.name),
+            sqlQuery
+        )
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, mapOf("sqlLength" to sqlQuery.length), null)
         val historyData = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, mapOf("rowCount" to historyData.size), null)
 
         if (historyData.isEmpty()) {
             return AnalysisResult(emptyList(), "没有足够的历史数据进行预测。", emptyList(), sqlQuery)
         }
 
         // 简单的 LLM 预测模拟
+        recordStage(
+            AnalysisTaskService.STAGE_PREDICTION_GENERATING,
+            mapOf("historyRowCount" to historyData.size),
+            null
+        )
         val predictionPrompt = """
             基于以下历史数据，预测未来 3 个时间点的数值：
             历史数据: ${historyData.takeLast(20)}
@@ -168,6 +269,11 @@ class DataAnalysisAgent(
 
         // 提示词增强：告知 AI 数据中包含预测字段，建议区分显示
         val vizHint = "数据包含历史和预测部分（由 'is_prediction' 字段标记）。建议使用折线图，并尝试用颜色或线型区分预测部分。${request.query}"
+        recordStage(
+            AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
+            mapOf("rowCount" to finalData.size, "queryMode" to IntentType.PREDICTION.name),
+            null
+        )
         val visualizations = visualizationAgent.suggestVisualizations(finalData, vizHint)
 
         return AnalysisResult(finalData, insights, visualizations, sqlQuery)
@@ -179,13 +285,30 @@ class DataAnalysisAgent(
      * @param request 包含用户查询和数据源信息的请求对象
      * @return AnalysisResult 包含查询结果、完整分析报告、可视化建议
      */
-    private suspend fun processReportGeneration(request: AnalysisRequest): AnalysisResult {
+    private suspend fun processReportGeneration(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
         val dataSourceId = requireDataSourceId(request)
         // 1. 执行宽泛的查询以获取全面数据
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATING,
+            mapOf("analysisType" to IntentType.REPORT_GENERATION.name, "dataSourceId" to dataSourceId),
+            null
+        )
         val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(request.query, dataSourceId, request.userId)
+        recordStage(
+            AnalysisTaskService.STAGE_SQL_GENERATED,
+            mapOf("analysisType" to IntentType.REPORT_GENERATION.name),
+            sqlQuery
+        )
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, mapOf("sqlLength" to sqlQuery.length), null)
         val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, mapOf("rowCount" to data.size), null)
 
         // 2. 生成详细报告
+        recordStage(
+            AnalysisTaskService.STAGE_REPORT_GENERATING,
+            mapOf("rowCount" to data.size),
+            null
+        )
         val reportPrompt = """
             你是一个商业数据分析师。请根据以下数据生成一份详细的分析报告。
             
@@ -204,6 +327,11 @@ class DataAnalysisAgent(
         val fullReport = deepseekService.chatCompletion(reportPrompt) ?: "报告生成失败"
 
         // 报告模式下，图表是辅助
+        recordStage(
+            AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
+            mapOf("rowCount" to data.size, "queryMode" to IntentType.REPORT_GENERATION.name),
+            null
+        )
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
 
         return AnalysisResult(data, fullReport, visualizations, sqlQuery)
@@ -234,13 +362,29 @@ class DataAnalysisAgent(
      * @param request 包含用户查询和数据源信息的请求对象
      * @return AnalysisResult 包含分析结果、洞察和可视化建议
      */
-    private suspend fun processRawTextData(request: AnalysisRequest): AnalysisResult {
+    private suspend fun processRawTextData(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
+        recordStage(
+            AnalysisTaskService.STAGE_RAW_TEXT_PARSING,
+            mapOf("queryLength" to request.query.length),
+            null
+        )
         val data = try {
             rawTextDataParserService.parse(request.query)
         } catch (_: IllegalArgumentException) {
+            recordStage(
+                AnalysisTaskService.STAGE_NATURAL_LANGUAGE_EXTRACTION,
+                mapOf("fallback" to true),
+                null
+            )
             naturalLanguageDataExtractionService.extract(request.query)
         }
+        recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, mapOf("rowCount" to data.size), null)
         val insights = generateInsights(data, request.query, "用户直接提供了原始数据或自然语言描述，请提炼关键结论，并指出最值得关注的对比、趋势或异常。")
+        recordStage(
+            AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
+            mapOf("rowCount" to data.size, "queryMode" to "RAW_TEXT"),
+            null
+        )
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
         return AnalysisResult(data, insights, visualizations, null)
     }
