@@ -1,5 +1,6 @@
 package top.phj233.smartdatainsightagent.interceptor
 
+import cn.dev33.satoken.exception.NotLoginException
 import cn.dev33.satoken.stp.StpUtil
 import org.babyfish.jimmer.kt.isLoaded
 import org.babyfish.jimmer.sql.DraftInterceptor
@@ -20,14 +21,16 @@ import java.time.ZoneOffset
 class BaseEntityDraftInterceptor : DraftInterceptor<BaseEntity, BaseEntityDraft> {
 
     override fun beforeSave(draft: BaseEntityDraft, original: BaseEntity?) {
+        val currentUserId = currentLoginUserIdOrNull()
+
         if (!isLoaded(draft, BaseEntity::modifiedTimeStamp)) {
             // 无论是新增还是修改，都要更新 modifiedTimeStamp 一串数字时间戳
             draft.modifiedTimeStamp = LocalDateTime.now().toEpochSecond(ZoneOffset.of("+8"))
         }
 
-        if (!isLoaded(draft, BaseEntity::modifiedBy)) {
+        if (currentUserId != null && !isLoaded(draft, BaseEntity::modifiedBy)) {
             draft.modifiedBy {
-                id = StpUtil.getLoginIdAsLong()
+                id = currentUserId
             }
         }
 
@@ -36,11 +39,19 @@ class BaseEntityDraftInterceptor : DraftInterceptor<BaseEntity, BaseEntityDraft>
                 draft.createdTimeStamp = LocalDateTime.now().toEpochSecond(ZoneOffset.of("+8"))
             }
 
-            if (!isLoaded(draft, BaseEntity::createdBy)) {
+            if (currentUserId != null && !isLoaded(draft, BaseEntity::createdBy)) {
                 draft.createdBy {
-                    id = StpUtil.getLoginIdAsLong()
+                    id = currentUserId
                 }
             }
+        }
+    }
+
+    private fun currentLoginUserIdOrNull(): Long? {
+        return try {
+            if (StpUtil.isLogin()) StpUtil.getLoginIdAsLong() else null
+        } catch (_: NotLoginException) {
+            null
         }
     }
 }

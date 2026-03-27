@@ -23,7 +23,7 @@ repositories {
     maven { url = uri("https://maven.aliyun.com/repository/public/") }
     maven { url = uri("https://mirrors.tencent.com/nexus/repository/maven-public") }
 }
-val jimmerVersion = "0.9.120"
+val jimmerVersion = "0.10.6"
 val springAiVersion = "1.1.2"
 
 dependencies {

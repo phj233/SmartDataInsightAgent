@@ -22,11 +22,11 @@ interface BaseEntity {
 
     @ManyToOne
     @OnDissociate(DissociateAction.SET_NULL)
-    val createdBy: User
+    val createdBy: User?
 
     val modifiedTimeStamp: Long
 
     @ManyToOne
     @OnDissociate(DissociateAction.SET_NULL)
-    val modifiedBy: User
+    val modifiedBy: User?
 }
