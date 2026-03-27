@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service
 import java.util.concurrent.TimeUnit
 
 /**
+ * Redis 服务类
  * @author phj233
  * @since 2026/2/26 20:21
  * @version
@@ -41,5 +42,26 @@ class RedisService(val redisTemplate: StringRedisTemplate) {
             return true
         }
         return false
+    }
+
+    /**
+     * 生成邮箱验证码并设置默认有效期。
+     */
+    fun generateEmailCode(email: String, code: String, expireTime: Long = DEFAULT_EMAIL_CODE_TTL_SECONDS) {
+        generateCode(emailCodeKey(email), code, expireTime)
+    }
+
+    /**
+     * 验证邮箱验证码，成功后自动删除。
+     */
+    fun verifyEmailCode(email: String, code: String): Boolean {
+        return verifyCode(emailCodeKey(email), code)
+    }
+
+    private fun emailCodeKey(email: String): String = "$EMAIL_CODE_PREFIX$email"
+
+    companion object {
+        private const val EMAIL_CODE_PREFIX = "verify:code:"
+        private const val DEFAULT_EMAIL_CODE_TTL_SECONDS = 300L
     }
 }

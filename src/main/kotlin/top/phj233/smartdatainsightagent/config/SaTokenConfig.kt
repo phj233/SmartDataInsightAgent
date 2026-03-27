@@ -1,10 +1,11 @@
 package top.phj233.smartdatainsightagent.config
 
-import cn.dev33.satoken.`fun`.SaFunction
 import cn.dev33.satoken.interceptor.SaInterceptor
-import cn.dev33.satoken.router.SaRouter
 import cn.dev33.satoken.stp.StpInterface
 import cn.dev33.satoken.stp.StpUtil
+import jakarta.servlet.DispatcherType
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 import org.springframework.web.filter.CorsFilter
+import org.springframework.web.servlet.HandlerInterceptor
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 import top.phj233.smartdatainsightagent.repository.UserRepository
@@ -27,16 +29,30 @@ import top.phj233.smartdatainsightagent.repository.UserRepository
 @Configuration
 class SaTokenConfig : WebMvcConfigurer {
     override fun addInterceptors(registry: InterceptorRegistry) {
-        registry.addInterceptor(SaInterceptor{
-            SaRouter.match("/**").notMatch(
-                "/user/user/login",
+        val saInterceptor = SaInterceptor {
+            StpUtil.checkLogin()
+        }
+
+        registry.addInterceptor(object : HandlerInterceptor {
+            override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
+                // 只对 DispatcherType.REQUEST 的请求进行登录检查，避免对静态资源等非请求类型的访问进行拦截
+                if (request.dispatcherType != DispatcherType.REQUEST) {
+                    return true
+                }
+                return saInterceptor.preHandle(request, response, handler)
+            }
+        })
+            .addPathPatterns("/api/**")
+            .excludePathPatterns(
+                "/api/user/login",
+                "/api/user/register",
+                "/api/user/sendCode",
+                "/api/user/loginByCode",
                 "/openapi.html",
                 "/openapi.yml",
-                "/ts.zip")
-                .check(SaFunction {
-                    StpUtil.checkLogin()
-                })
-        })
+                "/ts.zip",
+                "/error"
+            )
 
     }
 
