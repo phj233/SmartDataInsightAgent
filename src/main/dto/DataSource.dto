@@ -1,0 +1,38 @@
+export top.phj233.smartdatainsightagent.entity.DataSource
+ -> package top.phj233.smartdatainsightagent.entity.dto
+
+input DataSourceCreateInput {
+    name
+    type
+    connectionConfig
+    schemaInfo
+}
+
+input DataSourceUpdateInput {
+    name
+    type
+    connectionConfig
+    schemaInfo
+}
+
+DataSourceSummaryView {
+    id
+    name
+    type
+    active
+    createdTimeStamp
+    modifiedTimeStamp
+}
+
+DataSourceDetailView {
+    id
+    userId
+    name
+    type
+    connectionConfig
+    schemaInfo
+    active
+    createdTimeStamp
+    modifiedTimeStamp
+}
+
