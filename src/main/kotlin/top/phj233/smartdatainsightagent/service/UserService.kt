@@ -6,9 +6,11 @@ import org.babyfish.jimmer.sql.ast.mutation.SaveMode
 import org.springframework.stereotype.Service
 import top.phj233.smartdatainsightagent.entity.addBy
 import top.phj233.smartdatainsightagent.entity.dto.UserLoginByCodeDTO
+import top.phj233.smartdatainsightagent.entity.dto.UserLoginDTO
 import top.phj233.smartdatainsightagent.entity.dto.UserRegisterDTO
 import top.phj233.smartdatainsightagent.exception.UserException
 import top.phj233.smartdatainsightagent.repository.UserRepository
+import kotlin.random.Random
 
 /**
  * @author phj233
@@ -17,7 +19,9 @@ import top.phj233.smartdatainsightagent.repository.UserRepository
  */
 @Service
 class UserService(
-    val userRepository: UserRepository
+    val userRepository: UserRepository,
+    val redisService: RedisService,
+    val emailService: EmailService
 ) {
     /**
      * 用户注册
@@ -31,6 +35,7 @@ class UserService(
         userRegisterDTO.copy(password = BCrypt.hashpw(userRegisterDTO.password)).let {
             userRepository.save(it.toEntity{
                 roles().addBy { id = 1 } // 默认分配普通用户角色
+                enabled = true
             }, SaveMode.INSERT_ONLY)
         }
     }
@@ -40,8 +45,8 @@ class UserService(
      * @param userLoginDTO 用户登录DTO
      * @throws UserException 用户不存在或用户名或密码错误
      */
-    fun login(userLoginDTO: UserRegisterDTO) {
-        val user = userRepository.findUserByEmail(userLoginDTO.email) ?: throw UserException.userNotFound("用户不存在")
+    fun login(userLoginDTO: UserLoginDTO) {
+        val user = userRepository.findUserByEmailOrUsername(userLoginDTO.username,userLoginDTO.username) ?: throw UserException.userNotFound("用户不存在")
         if (!BCrypt.checkpw(userLoginDTO.password, user.password)) {
             throw UserException.invalidCredentials("用户名或密码错误")
         }
@@ -51,5 +56,16 @@ class UserService(
     fun loginByCode(loginDTO: UserLoginByCodeDTO) {
         val user = userRepository.findUserByEmail(loginDTO.email) ?: throw UserException.userNotFound("用户不存在")
         StpUtil.login(user.id)
+    }
+
+    /**
+     * 发送邮箱验证码。
+     *
+     * 生成 6 位数字验证码并写入 Redis，随后发送邮件。
+     */
+    fun sendVerificationCode(email: String) {
+        val code = Random.nextInt(100000, 1000000).toString()
+        redisService.generateEmailCode(email, code)
+        emailService.sendVerificationCode(email, code)
     }
 }

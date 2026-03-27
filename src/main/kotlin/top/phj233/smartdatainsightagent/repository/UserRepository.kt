@@ -2,10 +2,9 @@ package top.phj233.smartdatainsightagent.repository
 
 import org.babyfish.jimmer.spring.repository.KRepository
 import org.babyfish.jimmer.sql.kt.ast.expression.eq
+import org.babyfish.jimmer.sql.kt.ast.expression.or
 import org.springframework.stereotype.Repository
-import top.phj233.smartdatainsightagent.entity.User
-import top.phj233.smartdatainsightagent.entity.fetchBy
-import top.phj233.smartdatainsightagent.entity.id
+import top.phj233.smartdatainsightagent.entity.*
 
 /**
  * @author phj233
@@ -22,6 +21,16 @@ interface UserRepository : KRepository<User, Long> {
             }
         })
     }.execute()
+
+    fun findUserByEmailOrUsername(email: String, username: String): User? = sql. createQuery(User::class){
+        where(
+            or(
+                table.email.eq(email),
+                table.username.eq(username)
+            )
+        )
+        select(table)
+    }.execute().firstOrNull()
 
     fun findUserByEmail(email: String): User?
 }

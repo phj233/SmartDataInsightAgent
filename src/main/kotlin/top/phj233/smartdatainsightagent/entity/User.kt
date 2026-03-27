@@ -9,6 +9,7 @@ import org.babyfish.jimmer.sql.*
  * @version
  */
 @Entity
+@Table(name = "user", schema = "public")
 interface User: BaseEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -18,6 +19,7 @@ interface User: BaseEntity {
     @ManyToMany
     val roles: List<Role>
 
+    @Key
     val username: String
 
     val password: String

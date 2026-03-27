@@ -2,14 +2,12 @@ export top.phj233.smartdatainsightagent.entity.User
  -> package top.phj233.smartdatainsightagent.entity.dto
 import org.springframework.validation.annotation.Validated
 import jakarta.validation.constraints.Email
+import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 
 input UserLoginDTO {
-    username?
-    password?
-    @Email(message = "邮箱格式错误")
-    email?
-    code : String?
+    username
+    password
 }
 input UserLoginByCodeDTO {
     code: String
@@ -23,3 +21,10 @@ input UserRegisterDTO {
     email
     code: String
 }
+
+input UserSendCodeDTO {
+    @NotBlank(message = "邮箱不能为空")
+    @Email(message = "邮箱格式错误")
+    email: String
+}
+
