@@ -1,6 +1,8 @@
 package top.phj233.smartdatainsightagent.service
 
 import jakarta.mail.internet.MimeMessage
+import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ResourceLoader
 import org.springframework.mail.javamail.JavaMailSender
@@ -17,10 +19,13 @@ import java.io.InputStreamReader
  */
 @Service
 class EmailService(private val mail: JavaMailSender,private val resourceLoader: ResourceLoader) {
+    private val logger = LoggerFactory.getLogger(EmailService::class.java)
+
     @Value("\${spring.mail.username}")
     private lateinit var from: String
 
     fun sendVerificationCode(to: String, code: String) {
+        logger.info("[邮件] 开始发送验证码，userId={}, to={}", MDC.get("userId"), to)
         val message: MimeMessage = mail.createMimeMessage()
         val helper = MimeMessageHelper(message, true)
         helper.setFrom(from)
@@ -38,5 +43,6 @@ class EmailService(private val mail: JavaMailSender,private val resourceLoader: 
         }
         helper.setText(content, true)
         mail.send(message)
+        logger.info("[邮件] 验证码发送完成，userId={}, to={}", MDC.get("userId"), to)
     }
 }
