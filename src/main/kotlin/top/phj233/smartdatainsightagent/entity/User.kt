@@ -27,6 +27,8 @@ interface User: BaseEntity {
     @Key
     val email: String
 
+    val avatar: String?
+
     val enabled: Boolean
 
 }

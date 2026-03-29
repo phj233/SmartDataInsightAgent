@@ -12,7 +12,7 @@ input UserLoginDTO {
 input UserLoginByCodeDTO {
     code: String
     @Email(message = "邮箱格式错误")
-    email: String
+    email
 }
 input UserRegisterDTO {
     @Size(min = 6, max = 32, message = "用户名长度必须在6-32之间")
@@ -25,6 +25,16 @@ input UserRegisterDTO {
 input UserSendCodeDTO {
     @NotBlank(message = "邮箱不能为空")
     @Email(message = "邮箱格式错误")
-    email: String
+    email
+}
+
+// API 出参: 当前登录用户信息
+input UserMeResponse {
+    id
+    username
+    email
+    avatar
+    enabled
+    roles: List<String>
 }
 

@@ -32,5 +32,20 @@ interface UserRepository : KRepository<User, Long> {
         select(table)
     }.execute().firstOrNull()
 
+    fun findMeById(id: Long): User? = sql.createQuery(User::class) {
+        where(table.id.eq(id))
+        select(
+            table.fetchBy {
+                username()
+                email()
+                avatar()
+                enabled()
+                roles {
+                    name()
+                }
+            }
+        )
+    }.execute().firstOrNull()
+
     fun findUserByEmail(email: String): User?
 }

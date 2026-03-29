@@ -2,14 +2,10 @@ package top.phj233.smartdatainsightagent.controller
 
 import cn.dev33.satoken.annotation.SaIgnore
 import jakarta.validation.Valid
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RestController
-import top.phj233.smartdatainsightagent.entity.dto.UserLoginByCodeDTO
-import top.phj233.smartdatainsightagent.entity.dto.UserLoginDTO
-import top.phj233.smartdatainsightagent.entity.dto.UserRegisterDTO
-import top.phj233.smartdatainsightagent.entity.dto.UserSendCodeDTO
+import org.springframework.http.MediaType
+import org.springframework.web.bind.annotation.*
+import org.springframework.web.multipart.MultipartFile
+import top.phj233.smartdatainsightagent.entity.dto.*
 import top.phj233.smartdatainsightagent.exception.UserException
 import top.phj233.smartdatainsightagent.service.RedisService
 import top.phj233.smartdatainsightagent.service.UserService
@@ -26,6 +22,30 @@ class UserController(
     val userService: UserService,
     val redisService: RedisService
 ) {
+    /**
+     * 获取当前登录用户信息。
+     */
+    @GetMapping("/me")
+    fun me(): UserMeResponse {
+        return userService.getCurrentUser()
+    }
+
+    /**
+     * 上传当前登录用户头像。
+     */
+    @PostMapping("/avatar", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
+    fun uploadAvatar(@RequestPart("file") file: MultipartFile): UserMeResponse {
+        return userService.uploadAvatar(file)
+    }
+
+    /**
+     * 注销当前登录会话。
+     */
+    @PostMapping("/logout")
+    fun logout() {
+        userService.logout()
+    }
+
     /**
      * 发送邮箱验证码
      */
