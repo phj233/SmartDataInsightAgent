@@ -1,6 +1,7 @@
 package top.phj233.smartdatainsightagent.service.agent
 
 import com.fasterxml.jackson.core.type.TypeReference
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,11 +19,18 @@ import top.phj233.smartdatainsightagent.service.data.NaturalLanguageDataExtracti
 import top.phj233.smartdatainsightagent.service.data.QueryExecutorService
 import top.phj233.smartdatainsightagent.service.data.RawTextDataParserService
 
-private typealias StageRecorder = suspend (String, Map<String, Any>, String?) -> Unit
+private typealias StageRecorder = suspend (String, Map<String, JsonNode>, String?) -> Unit
 
 @Service
 /**
  * 数据分析 Agent，负责理解用户意图并执行相应的数据分析流程
+ * 核心功能：
+ * - 动态意图识别：通过 DeepSeek 理解用户查询的具体分析需求（普通查询、趋势分析、预测或报告生成），并根据意图调整分析流程。
+ * - 多流程支持：针对不同的分析需求，执行不同的数据查询、洞察生成和可视化建议流程。
+ * - 原始文本数据分析：支持用户直接输入表格数据或自然语言数据描述的场景，自动解析并分析这些数据，无需依赖结构化数据源。
+ * - 详细阶段记录：在分析过程中记录每个阶段的详细信息，包括 SQL生成、查询执行、洞察生成和可视化建议等，以便后续分析任务的监控和优化。
+ * - 异常处理：在任何阶段发生异常时，记录失败状态和错误信息，并抛出异常以便上层处理。
+ *
  * @author phj233
  * @since 2026/1/28 15:30
  * @version
@@ -41,27 +49,36 @@ class DataAnalysisAgent(
 
     /**
      * 分析数据的主入口方法，根据请求内容动态判断分析流程。
-     * @param request 包含用户查询、数据源信息和用户 ID 的分析请求对象
-     * @return AnalysisResult 包含分析结果、洞察和可视化建议
-     * @see AnalysisResult
+     *
      * 流程概述：
      * - 如果请求中包含 dataSourceId，则先解析用户意图，再根据意图分发到对应的分析流程（普通查询、趋势分析、预测或报告生成）。
      * - 如果请求中不包含 dataSourceId，则直接将用户输入的文本数据进行解析和分析，适用于用户直接提供表格数据或自然语言数据描述的场景。整个流程中会记录详细的阶段信息，包括 SQL 生成、查询执行、洞察生成和可视化建议等，以便后续分析任务的监控和优化。
      *
      * 异常处理：如果在任何阶段发生异常，都会记录失败状态和错误信息，并抛出异常以便上层处理。
+     * @param request 包含用户查询、数据源信息和用户 ID 的分析请求对象
+     * @return AnalysisResult 包含分析结果、洞察和可视化建议
+     * @see AnalysisResult
      */
     @Transactional
     suspend fun analyzeData(request: AnalysisRequest): AnalysisResult {
-        val task = withContext(Dispatchers.IO) {
-            analysisTaskService.createTask(request)
-        }
+        log.info("[分析Agent] 收到分析请求，userId={}, dataSourceId={}, queryLength={}", request.userId, request.dataSourceId, request.query.length)
+        val task = withContext(Dispatchers.IO) { analysisTaskService.createTask(request) }
+        return analyzeDataForTask(task.id, request)
+    }
+
+    /**
+     * 在已创建任务的前提下执行分析链路。
+     */
+    @Transactional
+    suspend fun analyzeDataForTask(taskId: Long, request: AnalysisRequest): AnalysisResult {
+        log.info("[分析Agent] 开始执行任务分析，taskId={}, userId={}, dataSourceId={}", taskId, request.userId, request.dataSourceId)
         val startTime = System.currentTimeMillis()
         var lastStage = AnalysisTaskService.STAGE_TASK_CREATED
 
         val recordStage: StageRecorder = { stage, details, generatedSql ->
             lastStage = stage
             runBlockingTaskPersistence {
-                analysisTaskService.markRunning(task.id, stage, details, generatedSql)
+                analysisTaskService.markRunning(taskId, stage, details, generatedSql)
             }
         }
 
@@ -74,22 +91,29 @@ class DataAnalysisAgent(
 
             runBlockingTaskPersistence {
                 analysisTaskService.markSuccess(
-                    taskId = task.id,
+                    taskId = taskId,
                     result = result,
                     executionTime = System.currentTimeMillis() - startTime,
                     stage = AnalysisTaskService.STAGE_COMPLETED,
-                    details = buildMap {
-                        put("dataSourceId", request.dataSourceId?.toString() ?: "RAW_TEXT")
-                        put("resultRowCount", result.data.size)
-                        put("visualizationCount", result.visualizations.size)
-                    }
+                    details = jsonDetailsOf(
+                        "dataSourceId" to (request.dataSourceId?.toString() ?: "RAW_TEXT"),
+                        "resultRowCount" to result.data.size,
+                        "visualizationCount" to result.visualizations.size
+                    )
                 )
             }
+            log.info(
+                "[分析Agent] 任务分析成功，taskId={}, userId={}, executionTimeMs={}",
+                taskId,
+                request.userId,
+                System.currentTimeMillis() - startTime
+            )
             result
         } catch (ex: Exception) {
+            log.error("[分析Agent] 任务分析失败，taskId={}, userId={}, stage={}", taskId, request.userId, lastStage, ex)
             runBlockingTaskPersistence {
                 analysisTaskService.markFailed(
-                    taskId = task.id,
+                    taskId = taskId,
                     stage = lastStage,
                     errorMessage = ex.message ?: "分析任务执行失败",
                     executionTime = System.currentTimeMillis() - startTime
@@ -133,18 +157,18 @@ class DataAnalysisAgent(
     private suspend fun resolveIntent(request: AnalysisRequest, recordStage: StageRecorder): Intent {
         recordStage(
             AnalysisTaskService.STAGE_INTENT_ANALYZING,
-            mapOf("query" to request.query),
+            jsonDetailsOf("query" to request.query),
             null
         )
 
         val intent = understandIntent(request.query)
         recordStage(
             AnalysisTaskService.STAGE_INTENT_RESOLVED,
-            buildMap {
-                put("intentType", intent.type.name)
-                put("confidence", intent.confidence)
-                intent.parameters?.takeIf { it.isNotEmpty() }?.let { put("intentParameters", it) }
-            },
+            jsonDetailsOf(
+                "intentType" to intent.type.name,
+                "confidence" to intent.confidence,
+                "intentParameters" to intent.parameters?.takeIf { it.isNotEmpty() }
+            ),
             null
         )
         return intent
@@ -179,7 +203,7 @@ class DataAnalysisAgent(
         return try {
             deepseekService.structuredOutput(prompt, Intent::class.java) as Intent
         } catch (e: Exception) {
-            log.warn("DataAnalysisAgent: 无法准确理解意图，默认使用 DATA_QUERY。错误: ${e.message}")
+            log.warn("[分析Agent] 无法准确理解意图，默认使用 DATA_QUERY，错误: ${e.message}")
             // 兜底策略
             Intent(IntentType.DATA_QUERY, confidence = 1.0)
         }
@@ -200,7 +224,7 @@ class DataAnalysisAgent(
         recordVisualizationStage(recordStage, execution.data.size, IntentType.DATA_QUERY.name)
         val visualizations = visualizationAgent.suggestVisualizations(execution.data, request.query)
 
-        return AnalysisResult(execution.data, insights, visualizations, execution.sqlQuery)
+        return AnalysisResult(toJsonRows(execution.data), insights, visualizations, execution.sqlQuery)
     }
 
     // --- 2. 趋势分析 (侧重时间序列) ---
@@ -221,7 +245,7 @@ class DataAnalysisAgent(
         recordVisualizationStage(recordStage, execution.data.size, IntentType.TREND_ANALYSIS.name)
         val visualizations = visualizationAgent.suggestVisualizations(execution.data, vizHint)
 
-        return AnalysisResult(execution.data, insights, visualizations, execution.sqlQuery)
+        return AnalysisResult(toJsonRows(execution.data), insights, visualizations, execution.sqlQuery)
     }
 
     // --- 3. 预测 (简单 AI 预测) ---
@@ -244,7 +268,7 @@ class DataAnalysisAgent(
         // 简单的 LLM 预测模拟
         recordStage(
             AnalysisTaskService.STAGE_PREDICTION_GENERATING,
-            mapOf("historyRowCount" to historyData.size),
+            jsonDetailsOf("historyRowCount" to historyData.size),
             null
         )
         val predictionPrompt = """
@@ -266,7 +290,7 @@ class DataAnalysisAgent(
         recordVisualizationStage(recordStage, finalData.size, IntentType.PREDICTION.name)
         val visualizations = visualizationAgent.suggestVisualizations(finalData, vizHint)
 
-        return AnalysisResult(finalData, insights, visualizations, execution.sqlQuery)
+        return AnalysisResult(toJsonRows(finalData), insights, visualizations, execution.sqlQuery)
     }
 
     // --- 4. 报告生成 (侧重文本) ---
@@ -285,7 +309,7 @@ class DataAnalysisAgent(
         // 2. 生成详细报告
         recordStage(
             AnalysisTaskService.STAGE_REPORT_GENERATING,
-            mapOf("rowCount" to data.size),
+            jsonDetailsOf("rowCount" to data.size),
             null
         )
         val reportPrompt = """
@@ -309,7 +333,7 @@ class DataAnalysisAgent(
         recordVisualizationStage(recordStage, data.size, IntentType.REPORT_GENERATION.name)
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
 
-        return AnalysisResult(data, fullReport, visualizations, execution.sqlQuery)
+        return AnalysisResult(toJsonRows(data), fullReport, visualizations, execution.sqlQuery)
     }
 
     // 通用洞察生成器
@@ -343,7 +367,7 @@ class DataAnalysisAgent(
     private suspend fun processRawTextData(request: AnalysisRequest, recordStage: StageRecorder): AnalysisResult {
         recordStage(
             AnalysisTaskService.STAGE_RAW_TEXT_PARSING,
-            mapOf("queryLength" to request.query.length),
+            jsonDetailsOf("queryLength" to request.query.length),
             null
         )
         val data = extractInputData(request, recordStage)
@@ -351,7 +375,7 @@ class DataAnalysisAgent(
         val insights = generateInsights(data, request.query, "用户直接提供了原始数据或自然语言描述，请提炼关键结论，并指出最值得关注的对比、趋势或异常。")
         recordVisualizationStage(recordStage, data.size, RAW_TEXT_MODE)
         val visualizations = visualizationAgent.suggestVisualizations(data, request.query)
-        return AnalysisResult(data, insights, visualizations, null)
+        return AnalysisResult(toJsonRows(data), insights, visualizations, null)
     }
 
     /**
@@ -372,18 +396,18 @@ class DataAnalysisAgent(
         val dataSourceId = requireDataSourceId(request)
         recordStage(
             AnalysisTaskService.STAGE_SQL_GENERATING,
-            mapOf("analysisType" to intentType.name, "dataSourceId" to dataSourceId),
+            jsonDetailsOf("analysisType" to intentType.name, "dataSourceId" to dataSourceId),
             null
         )
         val sqlQuery = queryParserAgent.parseNaturalLanguageToSQL(queryForSql, dataSourceId, request.userId)
         recordStage(
             AnalysisTaskService.STAGE_SQL_GENERATED,
-            mapOf("analysisType" to intentType.name),
+            jsonDetailsOf("analysisType" to intentType.name),
             sqlQuery
         )
-        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, mapOf("sqlLength" to sqlQuery.length), null)
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTING, jsonDetailsOf("sqlLength" to sqlQuery.length), null)
         val data = queryExecutorService.executeQuery(sqlQuery, dataSourceId, request.userId)
-        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, mapOf("rowCount" to data.size), null)
+        recordStage(AnalysisTaskService.STAGE_QUERY_EXECUTED, jsonDetailsOf("rowCount" to data.size), null)
         return QueryExecutionResult(sqlQuery, data)
     }
 
@@ -430,7 +454,7 @@ class DataAnalysisAgent(
         } catch (_: IllegalArgumentException) {
             recordStage(
                 AnalysisTaskService.STAGE_NATURAL_LANGUAGE_EXTRACTION,
-                mapOf("fallback" to true),
+                jsonDetailsOf("fallback" to true),
                 null
             )
             naturalLanguageDataExtractionService.extract(request.query)
@@ -444,7 +468,7 @@ class DataAnalysisAgent(
      * @param rowCount 当前数据行数
      */
     private suspend fun recordInsightsStage(recordStage: StageRecorder, rowCount: Int) {
-        recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, mapOf("rowCount" to rowCount), null)
+        recordStage(AnalysisTaskService.STAGE_INSIGHTS_GENERATING, jsonDetailsOf("rowCount" to rowCount), null)
     }
 
     /**
@@ -457,9 +481,21 @@ class DataAnalysisAgent(
     private suspend fun recordVisualizationStage(recordStage: StageRecorder, rowCount: Int, queryMode: String) {
         recordStage(
             AnalysisTaskService.STAGE_VISUALIZATION_GENERATING,
-            mapOf("rowCount" to rowCount, "queryMode" to queryMode),
+            jsonDetailsOf("rowCount" to rowCount, "queryMode" to queryMode),
             null
         )
+    }
+
+    private fun toJsonRows(data: List<Map<String, Any>>): List<Map<String, JsonNode>> {
+        return data.map { row ->
+            row.mapValues { (_, value) -> objectMapper.valueToTree(value) }
+        }
+    }
+
+    private fun jsonDetailsOf(vararg entries: Pair<String, Any?>): Map<String, JsonNode> {
+        return entries
+            .filter { it.second != null }
+            .associate { it.first to objectMapper.valueToTree(it.second) }
     }
 
     /**

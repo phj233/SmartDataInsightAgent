@@ -1,6 +1,7 @@
 package top.phj233.smartdatainsightagent.service.agent
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.JsonNode
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -251,15 +252,15 @@ class DataAnalysisAgentTest {
             }
         }
 
-        override fun markRunning(taskId: Long, stage: String, details: Map<String, Any>, generatedSql: String?) {
+        override fun markRunning(taskId: Long, stage: String, details: Map<String, JsonNode>, generatedSql: String?) {
             runningStages += StageCall(taskId, stage, details, generatedSql)
         }
 
-        override fun markSuccess(taskId: Long, result: AnalysisResult, executionTime: Long, stage: String, details: Map<String, Any>) {
+        override fun markSuccess(taskId: Long, result: AnalysisResult, executionTime: Long, stage: String, details: Map<String, JsonNode>) {
             successCall = SuccessCall(taskId, result, executionTime, stage, details)
         }
 
-        override fun markFailed(taskId: Long, stage: String, errorMessage: String, executionTime: Long, details: Map<String, Any>) {
+        override fun markFailed(taskId: Long, stage: String, errorMessage: String, executionTime: Long, details: Map<String, JsonNode>) {
             failedCall = FailedCall(taskId, stage, errorMessage, executionTime, details)
         }
     }
@@ -267,7 +268,7 @@ class DataAnalysisAgentTest {
     private data class StageCall(
         val taskId: Long,
         val stage: String,
-        val details: Map<String, Any>,
+        val details: Map<String, JsonNode>,
         val generatedSql: String?
     )
 
@@ -276,7 +277,7 @@ class DataAnalysisAgentTest {
         val result: AnalysisResult,
         val executionTime: Long,
         val stage: String,
-        val details: Map<String, Any>
+        val details: Map<String, JsonNode>
     )
 
     private data class FailedCall(
@@ -284,6 +285,6 @@ class DataAnalysisAgentTest {
         val stage: String,
         val errorMessage: String,
         val executionTime: Long,
-        val details: Map<String, Any>
+        val details: Map<String, JsonNode>
     )
 }
