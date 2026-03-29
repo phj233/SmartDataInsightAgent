@@ -6,6 +6,7 @@ import cn.dev33.satoken.stp.StpUtil
 import jakarta.servlet.DispatcherType
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.springframework.http.HttpMethod
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -39,6 +40,12 @@ class SaTokenConfig : WebMvcConfigurer {
                 if (request.dispatcherType != DispatcherType.REQUEST) {
                     return true
                 }
+
+                // 预检请求不携带业务 token，直接放行。
+                if (HttpMethod.OPTIONS.matches(request.method)) {
+                    return true
+                }
+
                 return saInterceptor.preHandle(request, response, handler)
             }
         })
