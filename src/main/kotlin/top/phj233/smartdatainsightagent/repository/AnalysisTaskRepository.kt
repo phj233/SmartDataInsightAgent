@@ -12,6 +12,14 @@ import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 @Repository
 interface AnalysisTaskRepository : KRepository<AnalysisTask, Long> {
 
+	fun findByIdAndUserId(id: Long, userId: Long): AnalysisTask?
+
+	fun deleteByIdAndUserId(id: Long, userId: Long): Int =
+		sql.createDelete(AnalysisTask::class) {
+			where(table.id.eq(id))
+			where(table.userId.eq(userId))
+		}.execute()
+
 	fun findDetailViewByIdAndUserId(id: Long, userId: Long): AnalysisTaskDetailView? =
 		sql.createQuery(AnalysisTask::class) {
 			where(table.id.eq(id))
@@ -19,6 +27,7 @@ interface AnalysisTaskRepository : KRepository<AnalysisTask, Long> {
 			select(
 				table.fetchBy {
 					userId()
+					name()
 					originalQuery()
 					generatedSql()
 					parameters()
@@ -36,6 +45,7 @@ interface AnalysisTaskRepository : KRepository<AnalysisTask, Long> {
 		select(
 			table.fetchBy {
 				userId()
+				name()
 				originalQuery()
 				status()
 				executionTime()
@@ -52,6 +62,7 @@ interface AnalysisTaskRepository : KRepository<AnalysisTask, Long> {
 			select(
 				table.fetchBy {
 					userId()
+					name()
 					originalQuery()
 					status()
 					executionTime()

@@ -2,14 +2,16 @@ package top.phj233.smartdatainsightagent.controller
 
 import cn.dev33.satoken.stp.StpUtil
 import jakarta.validation.Valid
+import org.springframework.http.MediaType
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.*
-import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskDetailView
-import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskSummaryView
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+import top.phj233.smartdatainsightagent.entity.dto.*
 import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
-import top.phj233.smartdatainsightagent.model.AnalysisExecuteRequest
 import top.phj233.smartdatainsightagent.model.AnalysisRequest
 import top.phj233.smartdatainsightagent.model.AnalysisResult
+import top.phj233.smartdatainsightagent.service.AnalysisExecutionService
+import top.phj233.smartdatainsightagent.service.AnalysisSseService
 import top.phj233.smartdatainsightagent.service.AnalysisTaskService
 import top.phj233.smartdatainsightagent.service.agent.DataAnalysisAgent
 
@@ -24,8 +26,43 @@ import top.phj233.smartdatainsightagent.service.agent.DataAnalysisAgent
 @RequestMapping("/api/analysis")
 class AnalysisController(
     private val dataAnalysisAgent: DataAnalysisAgent,
-    private val analysisTaskService: AnalysisTaskService
+    private val analysisTaskService: AnalysisTaskService,
+    private val analysisExecutionService: AnalysisExecutionService,
+    private val analysisSseService: AnalysisSseService
 ) {
+
+    /**
+     * 异步创建分析任务，立即返回 taskId，分析链路在后台执行。
+     */
+    @PostMapping("/tasks")
+    fun createTask(@Valid @RequestBody request: AnalysisExecuteRequest): AnalysisTaskCreateResponse {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        val normalizedQuery = request.query.trim()
+        val analysisRequest = AnalysisRequest(
+            query = normalizedQuery,
+            dataSourceId = request.dataSourceId,
+            userId = currentUserId
+        )
+
+        val task = analysisTaskService.createTask(analysisRequest)
+        analysisExecutionService.submit(task.id, analysisRequest)
+
+        return AnalysisTaskCreateResponse(
+            taskId = task.id,
+            status = task.status
+        )
+    }
+
+    /**
+     * 订阅任务进度 SSE 事件。
+     */
+    @GetMapping("/tasks/{taskId}/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun subscribeTaskEvents(@PathVariable taskId: Long): SseEmitter {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        // 先校验任务归属，防止越权订阅
+        analysisTaskService.getTaskDetail(taskId, currentUserId)
+        return analysisSseService.subscribe(taskId)
+    }
 
     /**
      * 执行数据分析请求
@@ -64,5 +101,35 @@ class AnalysisController(
     fun getTaskDetail(@PathVariable taskId: Long): AnalysisTaskDetailView {
         val currentUserId = StpUtil.getLoginIdAsLong()
         return analysisTaskService.getTaskDetail(taskId, currentUserId)
+    }
+
+    /**
+     * 重命名指定分析任务。
+     */
+    @PatchMapping("/tasks/{taskId}/name")
+    fun renameTask(
+        @PathVariable taskId: Long,
+        @Valid @RequestBody input: AnalysisTaskRenameInput
+    ): AnalysisTaskDetailView {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        return analysisTaskService.renameTask(taskId, currentUserId, input.name)
+    }
+
+    /**
+     * 使用 LLM 自动重命名指定分析任务。
+     */
+    @PostMapping("/tasks/{taskId}/name/llm")
+    suspend fun renameTaskByLlm(@PathVariable taskId: Long): AnalysisTaskDetailView {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        return analysisTaskService.renameTaskByLlm(taskId, currentUserId)
+    }
+
+    /**
+     * 删除指定分析任务。
+     */
+    @DeleteMapping("/tasks/{taskId}")
+    fun deleteTask(@PathVariable taskId: Long) {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        analysisTaskService.deleteTask(taskId, currentUserId)
     }
 }

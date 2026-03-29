@@ -1,5 +1,6 @@
 package top.phj233.smartdatainsightagent.model
 
+import com.fasterxml.jackson.databind.JsonNode
 import top.phj233.smartdatainsightagent.model.visualization.EChartsVisualization
 
 /**
@@ -13,7 +14,7 @@ import top.phj233.smartdatainsightagent.model.visualization.EChartsVisualization
  * @version
  */
 data class AnalysisResult(
-    val data: List<Map<String, Any>>,
+    val data: List<Map<String, JsonNode>>,
     val insights: String, // AI生成的洞察文本
     val visualizations: List<EChartsVisualization>,
     val sqlQuery: String?

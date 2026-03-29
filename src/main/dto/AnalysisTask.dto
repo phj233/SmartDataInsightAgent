@@ -1,13 +1,39 @@
 export top.phj233.smartdatainsightagent.entity.AnalysisTask
  -> package top.phj233.smartdatainsightagent.entity.dto
+import jakarta.validation.constraints.Min
+import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.Size
+import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 
 input AnalysisTaskCreateInput {
+    name
     originalQuery
+}
+
+input AnalysisTaskRenameInput {
+    @NotBlank(message = "name 不能为空")
+    @Size(max = 20, message = "name 长度不能超过 20")
+    name: String
+}
+
+// API 入参: 异步/同步分析执行请求
+input AnalysisExecuteRequest {
+    @NotBlank(message = "query 不能为空")
+    query: String
+    @Min(value = 1, message = "dataSourceId 必须大于 0")
+    dataSourceId: Long?
+}
+
+// API 出参: 异步创建任务后立即返回
+input AnalysisTaskCreateResponse {
+    taskId: Long
+    status
 }
 
 AnalysisTaskSummaryView {
     id
     userId
+    name
     originalQuery
     status
     executionTime
@@ -17,6 +43,7 @@ AnalysisTaskSummaryView {
 AnalysisTaskDetailView {
     id
     userId
+    name
     originalQuery
     generatedSql
     parameters

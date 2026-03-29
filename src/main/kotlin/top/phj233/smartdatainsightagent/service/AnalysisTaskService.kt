@@ -1,10 +1,18 @@
 package top.phj233.smartdatainsightagent.service
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.babyfish.jimmer.sql.ast.mutation.SaveMode
+import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import top.phj233.smartdatainsightagent.entity.AnalysisTask
 import top.phj233.smartdatainsightagent.entity.AnalysisTaskDraft
+import top.phj233.smartdatainsightagent.entity.copy
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskCreateInput
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskDetailView
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskSummaryView
@@ -12,8 +20,10 @@ import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 import top.phj233.smartdatainsightagent.exception.AnalysisTaskException
 import top.phj233.smartdatainsightagent.model.AnalysisRequest
 import top.phj233.smartdatainsightagent.model.AnalysisResult
+import top.phj233.smartdatainsightagent.model.AnalysisTaskProgressEvent
 import top.phj233.smartdatainsightagent.model.AnalysisTaskStageRecord
 import top.phj233.smartdatainsightagent.repository.AnalysisTaskRepository
+import top.phj233.smartdatainsightagent.service.ai.DeepseekService
 import java.time.LocalDateTime
 
 /**
@@ -24,8 +34,13 @@ import java.time.LocalDateTime
  */
 @Service
 class AnalysisTaskService(
-    private val analysisTaskRepository: AnalysisTaskRepository
+    private val analysisTaskRepository: AnalysisTaskRepository,
+    private val progressNotifier: AnalysisTaskProgressNotifier? = null,
+    private val deepseekService: DeepseekService? = null,
+    private val objectMapper: ObjectMapper = jacksonObjectMapper()
 ) {
+    private val logger = LoggerFactory.getLogger(AnalysisTaskService::class.java)
+
 
     /**
      * 创建新的分析任务，并初始化任务的基础状态与第一条阶段记录。
@@ -36,18 +51,36 @@ class AnalysisTaskService(
      */
     @Transactional
     fun createTask(request: AnalysisRequest): AnalysisTask {
-        validateCreateRequest(request)
-        val input = AnalysisTaskCreateInput(request.query)
-        return analysisTaskRepository.save(
-            input.toEntity {
-                user {
-                    id = request.userId
-                }
-                parameters = listOf(stageEntry(STAGE_TASK_CREATED, initialDetails(request)))
-                status = AnalysisStatus.PENDING
-            },
-            SaveMode.INSERT_ONLY
-        )
+        MDC.put("userId", request.userId.toString())
+        try {
+            logger.info("[任务服务] 创建分析任务，userId={}, dataSourceId={}, queryLength={}", request.userId, request.dataSourceId, request.query.length)
+            validateCreateRequest(request)
+            val input = AnalysisTaskCreateInput(
+                name = request.query.take(20),
+                originalQuery = request.query
+            )
+            val created = analysisTaskRepository.save(
+                input.toEntity {
+                    user {
+                        id = request.userId
+                    }
+                    parameters = listOf(stageEntry(STAGE_TASK_CREATED, initialDetails(request)))
+                    status = AnalysisStatus.PENDING
+                },
+                SaveMode.INSERT_ONLY
+            )
+            MDC.put("taskId", created.id.toString())
+            publishProgress(
+                taskId = created.id,
+                status = AnalysisStatus.PENDING,
+                stage = STAGE_TASK_CREATED,
+                details = created.parameters.lastOrNull()?.details ?: emptyMap()
+            )
+            return created
+        } finally {
+            MDC.remove("taskId")
+            MDC.remove("userId")
+        }
     }
 
     /**
@@ -63,9 +96,10 @@ class AnalysisTaskService(
     fun markRunning(
         taskId: Long,
         stage: String,
-        details: Map<String, Any> = emptyMap(),
+        details: Map<String, JsonNode> = emptyMap(),
         generatedSql: String? = null
     ) {
+        logger.info("[任务服务] 任务进入运行态，taskId={}, stage={}", taskId, stage)
         applyUpdate(
             taskId,
             TaskUpdateCommand(
@@ -93,8 +127,9 @@ class AnalysisTaskService(
         result: AnalysisResult,
         executionTime: Long,
         stage: String = STAGE_COMPLETED,
-        details: Map<String, Any> = emptyMap()
+        details: Map<String, JsonNode> = emptyMap()
     ) {
+        logger.info("[任务服务] 任务执行成功，taskId={}, stage={}, executionTimeMs={}", taskId, stage, executionTime)
         applyUpdate(
             taskId,
             TaskUpdateCommand(
@@ -125,14 +160,15 @@ class AnalysisTaskService(
         stage: String,
         errorMessage: String,
         executionTime: Long,
-        details: Map<String, Any> = emptyMap()
+        details: Map<String, JsonNode> = emptyMap()
     ) {
+        logger.warn("[任务服务] 任务执行失败，taskId={}, stage={}, executionTimeMs={}, error={}", taskId, stage, executionTime, errorMessage)
         applyUpdate(
             taskId,
             TaskUpdateCommand(
                 stage = stage,
                 status = AnalysisStatus.FAILED,
-                details = details + mapOf("errorMessage" to errorMessage),
+                details = details + mapOf("errorMessage" to toJsonNode(errorMessage)),
                 executionTime = executionTime,
                 errorMessage = errorMessage
             )
@@ -151,6 +187,7 @@ class AnalysisTaskService(
      */
     @Transactional(readOnly = true)
     fun listTaskSummaries(userId: Long, status: AnalysisStatus? = null): List<AnalysisTaskSummaryView> {
+        logger.info("[任务服务] 列出任务摘要，userId={}, status={}", userId, status)
         return status?.let { analysisTaskRepository.findSummaryViewsByUserIdAndStatus(userId, it) }
             ?: analysisTaskRepository.findSummaryViewsByUserId(userId)
     }
@@ -166,8 +203,76 @@ class AnalysisTaskService(
      */
     @Transactional(readOnly = true)
     fun getTaskDetail(taskId: Long, userId: Long): AnalysisTaskDetailView {
+        logger.info("[任务服务] 查询任务详情，userId={}, taskId={}", userId, taskId)
         return analysisTaskRepository.findDetailViewByIdAndUserId(taskId, userId)
             ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
+    }
+
+    /**
+     * 重命名当前用户可访问的分析任务。
+     */
+    @Transactional
+    fun renameTask(taskId: Long, userId: Long, name: String): AnalysisTaskDetailView {
+        MDC.put("taskId", taskId.toString())
+        MDC.put("userId", userId.toString())
+        try {
+            logger.info("[任务服务] 重命名任务，userId={}, taskId={}, name={}", userId, taskId, name)
+            val normalizedName = name.trim()
+            if (normalizedName.isBlank()) {
+                throw AnalysisTaskException.invalidTaskRequest("任务名称不能为空")
+            }
+
+            val existing = findOwnedTask(taskId, userId)
+            val updated = existing.copy {
+                this.name = normalizedName
+            }
+            analysisTaskRepository.save(updated, SaveMode.UPDATE_ONLY)
+
+            return analysisTaskRepository.findDetailViewByIdAndUserId(taskId, userId)
+                ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
+        } finally {
+            MDC.remove("taskId")
+            MDC.remove("userId")
+        }
+    }
+
+    /**
+     * 使用 LLM 为任务生成更合适的名称并重命名。
+     */
+    @Transactional
+    suspend fun renameTaskByLlm(taskId: Long, userId: Long): AnalysisTaskDetailView {
+        MDC.put("taskId", taskId.toString())
+        MDC.put("userId", userId.toString())
+        try {
+            val existing = findOwnedTask(taskId, userId)
+            val llmName = generateNameByLlm(existing.originalQuery, existing.name)
+            logger.info("[任务服务] LLM重命名任务，userId={}, taskId={}, generatedName={}", userId, taskId, llmName)
+            return withContext(Dispatchers.IO) {
+                renameTask(taskId, userId, llmName)
+            }
+        } finally {
+            MDC.remove("taskId")
+            MDC.remove("userId")
+        }
+    }
+
+    /**
+     * 删除当前用户可访问的分析任务。
+     */
+    @Transactional
+    fun deleteTask(taskId: Long, userId: Long) {
+        MDC.put("taskId", taskId.toString())
+        MDC.put("userId", userId.toString())
+        try {
+            logger.info("[任务服务] 删除任务，userId={}, taskId={}", userId, taskId)
+            val affectedRows = analysisTaskRepository.deleteByIdAndUserId(taskId, userId)
+            if (affectedRows == 0) {
+                throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
+            }
+        } finally {
+            MDC.remove("taskId")
+            MDC.remove("userId")
+        }
     }
 
     /**
@@ -178,20 +283,62 @@ class AnalysisTaskService(
      * @throws AnalysisTaskException 当任务不存在或状态流转非法时抛出
      */
     private fun applyUpdate(taskId: Long, command: TaskUpdateCommand) {
-        val existing = findTask(taskId)
-        validateTransition(existing, command.status)
+        MDC.put("taskId", taskId.toString())
+        try {
+            logger.debug("[任务服务] 应用任务状态更新，taskId={}, targetStatus={}, stage={}", taskId, command.status, command.stage)
+            val existing = findTask(taskId)
+            MDC.put("userId", existing.userId.toString())
+            validateTransition(existing, command.status)
 
-        val updatedTask = AnalysisTaskDraft.`$`.produce(existing) {
-            status = command.status
-            parameters = appendStage(existing.parameters, command.stage, command.details)
+            val updatedTask = AnalysisTaskDraft.`$`.produce(existing) {
+                status = command.status
+                parameters = appendStage(existing.parameters, command.stage, command.details)
 
-            command.generatedSql?.let { generatedSql = it }
-            command.result?.let { result = listOf(it) }
-            command.executionTime?.let { executionTime = it }
-            errorMessage = command.errorMessage
+                command.generatedSql?.let { generatedSql = it }
+                command.result?.let { result = listOf(it) }
+                command.executionTime?.let { executionTime = it }
+                errorMessage = command.errorMessage
+            }
+
+            analysisTaskRepository.save(updatedTask, SaveMode.UPDATE_ONLY)
+
+            publishProgress(
+                taskId = taskId,
+                status = command.status,
+                stage = command.stage,
+                details = command.details,
+                generatedSql = command.generatedSql,
+                errorMessage = command.errorMessage
+            )
+        } finally {
+            MDC.remove("taskId")
+            MDC.remove("userId")
         }
+    }
 
-        analysisTaskRepository.save(updatedTask, SaveMode.UPDATE_ONLY)
+    private fun publishProgress(
+        taskId: Long,
+        status: AnalysisStatus,
+        stage: String,
+        details: Map<String, JsonNode>,
+        generatedSql: String? = null,
+        errorMessage: String? = null
+    ) {
+        try {
+            progressNotifier?.notify(
+                AnalysisTaskProgressEvent(
+                    taskId = taskId,
+                    status = status,
+                    stage = stage,
+                    timestamp = LocalDateTime.now().toString(),
+                    details = details,
+                    generatedSql = generatedSql,
+                    errorMessage = errorMessage
+                )
+            )
+        } catch (ex: Exception) {
+            logger.warn("[任务服务] 推送任务进度失败(已忽略)，taskId={}, status={}, stage={}", taskId, status, stage, ex)
+        }
     }
 
     /**
@@ -203,6 +350,11 @@ class AnalysisTaskService(
      */
     private fun findTask(taskId: Long): AnalysisTask {
         return analysisTaskRepository.findNullable(taskId)
+            ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
+    }
+
+    private fun findOwnedTask(taskId: Long, userId: Long): AnalysisTask {
+        return analysisTaskRepository.findByIdAndUserId(taskId, userId)
             ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
     }
 
@@ -255,7 +407,7 @@ class AnalysisTaskService(
     private fun appendStage(
         existingStages: List<AnalysisTaskStageRecord>,
         stage: String,
-        details: Map<String, Any>
+        details: Map<String, JsonNode>
     ): List<AnalysisTaskStageRecord> {
         return existingStages + stageEntry(stage, details)
     }
@@ -266,12 +418,12 @@ class AnalysisTaskService(
      * @param request 分析请求
      * @return 创建阶段的详情信息
      */
-    private fun initialDetails(request: AnalysisRequest): Map<String, Any> = buildMap {
-        put("userId", request.userId)
-        put("query", request.query)
-        put("queryLength", request.query.length)
-        put("inputMode", if (request.dataSourceId != null) "DATA_SOURCE" else "RAW_TEXT")
-        request.dataSourceId?.let { put("dataSourceId", it) }
+    private fun initialDetails(request: AnalysisRequest): Map<String, JsonNode> = buildMap {
+        put("userId", toJsonNode(request.userId))
+        put("query", toJsonNode(request.query))
+        put("queryLength", toJsonNode(request.query.length))
+        put("inputMode", toJsonNode(if (request.dataSourceId != null) "DATA_SOURCE" else "RAW_TEXT"))
+        request.dataSourceId?.let { put("dataSourceId", toJsonNode(it)) }
     }
 
     /**
@@ -280,10 +432,10 @@ class AnalysisTaskService(
      * @param result 分析结果
      * @return 成功阶段的详情信息
      */
-    private fun successDetails(result: AnalysisResult): Map<String, Any> = buildMap {
-        put("rowCount", result.data.size)
-        put("visualizationCount", result.visualizations.size)
-        put("hasSqlQuery", result.sqlQuery != null)
+    private fun successDetails(result: AnalysisResult): Map<String, JsonNode> = buildMap {
+        put("rowCount", toJsonNode(result.data.size))
+        put("visualizationCount", toJsonNode(result.visualizations.size))
+        put("hasSqlQuery", toJsonNode(result.sqlQuery != null))
     }
 
     /**
@@ -295,49 +447,43 @@ class AnalysisTaskService(
      */
     private fun stageEntry(
         stage: String,
-        details: Map<String, Any>
+        details: Map<String, JsonNode>
     ): AnalysisTaskStageRecord {
         return AnalysisTaskStageRecord(
             stage = stage,
             timestamp = LocalDateTime.now().toString(),
-            details = sanitizeDetails(details)
+            details = details
         )
     }
 
-    /**
-     * 清洗阶段详情，确保写入 `@Serialized` 字段的数据结构稳定且可序列化。
-     *
-     * @param details 原始阶段详情
-     * @return 清洗后的阶段详情
-     */
-    private fun sanitizeDetails(details: Map<String, Any>): Map<String, Any> {
-        val sanitized = linkedMapOf<String, Any>()
-        details.forEach { (key, value) ->
-            sanitizeValue(value)?.let { sanitized[key] = it }
-        }
-        return sanitized
+    private fun toJsonNode(value: Any?): JsonNode {
+        return objectMapper.valueToTree(value)
     }
 
-    /**
-     * 递归清洗单个值，尽量保留基础类型、枚举、时间和集合/映射结构，
-     * 对无法直接保存的对象退化为字符串表示。
-     *
-     * @param value 原始值
-     * @return 可安全序列化的值；若原值为 `null` 则返回 `null`
-     */
-    private fun sanitizeValue(value: Any?): Any? = when (value) {
-        null -> null
-        is String, is Number, is Boolean -> value
-        is Enum<*> -> value.name
-        is LocalDateTime -> value.toString()
-        is Map<*, *> -> value.entries
-            .filter { it.key != null && it.value != null }
-            .mapNotNull { (key, nestedValue) ->
-                sanitizeValue(nestedValue)?.let { key.toString() to it }
-            }
-            .toMap()
-        is Iterable<*> -> value.mapNotNull { sanitizeValue(it) }
-        else -> value.toString()
+    private suspend fun generateNameByLlm(originalQuery: String, fallbackName: String): String {
+        val fallback = fallbackName.ifBlank { originalQuery.take(20) }
+        val service = deepseekService ?: return fallback.take(20)
+
+        val prompt = """
+            你是一个任务命名助手。请根据用户分析请求生成一个简洁的任务名称。
+            约束：
+            1. 仅返回任务名称文本，不要解释，不要 JSON。
+            2. 名称长度不超过 20 个字符。
+            3. 名称应准确概括查询主题。
+
+            用户查询：$originalQuery
+        """.trimIndent()
+
+        val generated = runCatching { service.chatCompletion(prompt) }
+            .onFailure { logger.warn("[任务服务] LLM生成任务名称失败，使用兜底名称", it) }
+            .getOrNull()
+            ?.trim()
+            ?.removePrefix("\"")
+            ?.removeSuffix("\"")
+            ?.replace(Regex("\\s+"), " ")
+            ?.takeIf { it.isNotBlank() }
+
+        return (generated ?: fallback).take(20)
     }
 
     companion object {
@@ -362,7 +508,7 @@ class AnalysisTaskService(
     private data class TaskUpdateCommand(
         val stage: String,
         val status: AnalysisStatus,
-        val details: Map<String, Any> = emptyMap(),
+        val details: Map<String, JsonNode> = emptyMap(),
         val generatedSql: String? = null,
         val result: AnalysisResult? = null,
         val executionTime: Long? = null,

@@ -23,6 +23,8 @@ interface AnalysisTask: BaseEntity {
     @ManyToOne
     val user: User
 
+    val name: String
+
     // 用户输入的原始查询
     @Column(name = "original_query")
     val originalQuery: String

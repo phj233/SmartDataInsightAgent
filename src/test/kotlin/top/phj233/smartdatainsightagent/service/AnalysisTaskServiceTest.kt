@@ -55,6 +55,7 @@ class AnalysisTaskServiceTest {
             AnalysisTaskSummaryView(
                 id = 1L,
                 userId = 7L,
+                name = "查看销售额",
                 originalQuery = "查看销售额",
                 status = AnalysisStatus.SUCCESS,
                 executionTime = 120L,
@@ -87,6 +88,7 @@ class AnalysisTaskServiceTest {
         val detail = AnalysisTaskDetailView(
             id = 3L,
             userId = 7L,
+            name = "查看趋势",
             originalQuery = "查看趋势",
             generatedSql = "select * from t",
             parameters = listOf(
@@ -129,6 +131,7 @@ class AnalysisTaskServiceTest {
             user {
                 this.id = 1L
             }
+            name = "查看销售额"
             originalQuery = "查看销售额"
             generatedSql = null
             parameters = emptyList()
