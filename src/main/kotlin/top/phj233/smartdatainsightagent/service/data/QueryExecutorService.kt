@@ -1,9 +1,11 @@
 package top.phj233.smartdatainsightagent.service.data
 
+import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 
 /**
+ * 查询执行服务
  * @author phj233
  * @since 2026/1/28 15:04
  * @version
@@ -13,8 +15,11 @@ class QueryExecutorService(
     private val jdbcTemplate: JdbcTemplate, // 实际项目中应根据 DataSource 动态切换数据源
     private val externalJdbcTemplateProvider: ExternalJdbcTemplateProvider
 ) {
+    private val logger = LoggerFactory.getLogger(QueryExecutorService::class.java)
+
     fun executeQuery(sql: String): List<Map<String, Any>> {
         validateReadOnlySql(sql)
+        logger.info("[查询执行] 使用默认数据源执行只读SQL")
         // 简单实现：直接使用当前配置的 jdbcTemplate
         // 生产环境需根据 dataSourceId 获取对应的 Connection
         return jdbcTemplate.queryForList(sql)
@@ -22,6 +27,7 @@ class QueryExecutorService(
 
     fun executeQuery(sql: String, dataSourceId: Long, userId: Long? = null): List<Map<String, Any>> {
         validateReadOnlySql(sql)
+        logger.info("[查询执行] 执行只读SQL，dataSourceId={}, userId={}", dataSourceId, userId)
         return externalJdbcTemplateProvider.getJdbcTemplate(dataSourceId, userId).queryForList(sql)
     }
 
