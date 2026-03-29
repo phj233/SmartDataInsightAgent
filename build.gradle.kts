@@ -45,6 +45,8 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("com.mysql:mysql-connector-j")
+    //minio
+    implementation("io.minio:minio:9.0.0")
     //jimmer
     ksp("org.babyfish.jimmer:jimmer-ksp:${jimmerVersion}")
     implementation("org.babyfish.jimmer:jimmer-spring-boot-starter:${jimmerVersion}")
