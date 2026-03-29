@@ -64,6 +64,9 @@ class MinioService(
         }
     }
 
+    /**
+     * 读取文件字节并进行基本验证，如非空和大小限制。
+     */
     private fun readAndValidateBytes(file: MultipartFile): ByteArray {
         if (file.isEmpty) {
             throw UserException.avatarInvalidFile("头像文件不能为空")
@@ -78,6 +81,9 @@ class MinioService(
         }
     }
 
+    /**
+     * 检测文件扩展名是否合法，并返回小写的扩展名。
+     */
     private fun detectAndValidateExtension(file: MultipartFile): String {
         val filename = file.originalFilename ?: throw UserException.avatarInvalidFile("文件名不能为空")
         val ext = filename.substringAfterLast('.', "").lowercase(Locale.ROOT)

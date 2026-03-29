@@ -5,12 +5,25 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.stereotype.Service
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
 
+/**
+ * 自然语言数据提取服务
+ * @author phj233
+ * @since 2026/3/26 18:00
+ * @version
+ */
+
 @Service
 class NaturalLanguageDataExtractionService(
     private val deepseekService: DeepseekService,
     private val objectMapper: ObjectMapper
 ) {
 
+    /**
+     * 从自然语言文本中提取适合可视化的结构化数据。
+     * @param rawText 用户输入的自然语言文本，可能包含统计数据、对比数据、趋势数据或分类数据。
+     * @return 提取出的结构化数据列表，每个元素是一个包含字段和值的 Map。
+     * @throws IllegalArgumentException 如果无法从文本中提取出任何数据，则抛出异常。
+     */
     suspend fun extract(rawText: String): List<Map<String, Any>> {
         val prompt = """
             你是一个数据结构化专家。

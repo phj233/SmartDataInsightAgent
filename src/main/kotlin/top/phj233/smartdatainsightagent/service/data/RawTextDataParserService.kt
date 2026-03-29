@@ -3,6 +3,14 @@ package top.phj233.smartdatainsightagent.service.data
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.springframework.stereotype.Service
 
+/**
+ * 原始文本数据解析服务
+ * 支持从原始文本中智能识别并解析出 JSON 数组、Markdown 表格、CSV 或 TSV 格式的数据。
+ * @author phj233
+ * @since 2026/3/26 20:00
+ * @version
+ */
+
 @Service
 class RawTextDataParserService(
     private val objectMapper: ObjectMapper
