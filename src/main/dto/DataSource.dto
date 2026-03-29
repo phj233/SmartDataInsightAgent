@@ -5,14 +5,14 @@ input DataSourceCreateInput {
     name
     type
     connectionConfig
-    schemaInfo
+    schemaInfo?
 }
 
 input DataSourceUpdateInput {
     name
     type
     connectionConfig
-    schemaInfo
+    schemaInfo?
 }
 
 DataSourceSummaryView {

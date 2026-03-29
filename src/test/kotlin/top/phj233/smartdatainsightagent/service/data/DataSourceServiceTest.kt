@@ -11,7 +11,8 @@ import top.phj233.smartdatainsightagent.repository.DataSourceRepository
 class DataSourceServiceTest {
 
     private val dataSourceRepository = mock(DataSourceRepository::class.java)
-    private val service = DataSourceService(dataSourceRepository)
+    private val schemaIntrospectionService = mock(DataSourceSchemaIntrospectionService::class.java)
+    private val service = DataSourceService(dataSourceRepository, schemaIntrospectionService)
 
     @Test
     fun `allow owner to access active datasource`() {

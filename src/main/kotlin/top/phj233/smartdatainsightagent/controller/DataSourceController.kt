@@ -60,12 +60,17 @@ class DataSourceController(
      * 更新用户数据源
      * @param id 数据源ID
      * @param input 包含更新后数据源连接信息的输入DTO
+     * @param refreshSchemaOnly 是否仅刷新 schema（默认 false）
      * @return 更新成功的数据源详情视图
      */
     @PutMapping("/{id}")
-    fun updateMine(@PathVariable id: Long, @Valid @RequestBody input: DataSourceUpdateInput): DataSourceDetailView {
+    fun updateMine(
+        @PathVariable id: Long,
+        @Valid @RequestBody input: DataSourceUpdateInput,
+        @RequestParam(name = "refreshSchemaOnly", defaultValue = "false") refreshSchemaOnly: Boolean
+    ): DataSourceDetailView {
         val currentUserId = StpUtil.getLoginIdAsLong()
-        return dataSourceService.updateForUser(id, currentUserId, input)
+        return dataSourceService.updateForUser(id, currentUserId, input, refreshSchemaOnly)
     }
 
     /**
