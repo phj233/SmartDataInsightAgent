@@ -1,6 +1,7 @@
 package top.phj233.smartdatainsightagent.interceptor
 
 import cn.dev33.satoken.exception.NotLoginException
+import cn.dev33.satoken.exception.SaTokenContextException
 import cn.dev33.satoken.stp.StpUtil
 import org.babyfish.jimmer.kt.isLoaded
 import org.babyfish.jimmer.sql.DraftInterceptor
@@ -51,6 +52,8 @@ class BaseEntityDraftInterceptor : DraftInterceptor<BaseEntity, BaseEntityDraft>
         return try {
             if (StpUtil.isLogin()) StpUtil.getLoginIdAsLong() else null
         } catch (_: NotLoginException) {
+            null
+        } catch (_: SaTokenContextException) {
             null
         }
     }
