@@ -69,6 +69,7 @@ src/
 已实现的关键能力：
 
 - `me`（当前登录用户）
+- `updateMe`（`PATCH /api/user/me`）
 - `logout`
 - `avatar` 上传（`multipart/form-data`）
 
@@ -77,6 +78,13 @@ src/
 - 前端请求默认携带凭据（按你的部署形态配置）。
 - 应用启动先 `bootstrap`：调用 `me` 判断会话。
 - 受保护接口出现未登录时：清空本地用户态并跳转 `/login`。
+
+`updateMe` 对接提醒（按当前后端实现）：
+
+- 入参 DTO 已包含可选字段：`username`、`password`、`email`、`avatar`、`code`。
+- 若改邮箱，前端仍应先走 `sendCode` 获取验证码并提交 `code`。
+- 头像上传主流程仍建议使用 `POST /api/user/avatar`（文件上传）；不要仅依赖 `updateMe` 处理文件。
+- 当前后端实现优先保证密码更新链路，前端做资料编辑页时建议将“改密”与“头像上传”独立交互处理，避免用户感知不一致。
 
 ---
 
@@ -91,12 +99,29 @@ src/
 5. 同步启动详情轮询兜底（低频）。
 6. 到达 `SUCCESS`/`FAILED` 后：拉一次详情并停止全部跟踪。
 
+失败任务重分析（原地，不新建任务）：
+
+1. 当任务 `status=FAILED` 时，展示“重新分析”按钮。
+2. 点击后调用 `POST /api/analysis/tasks/{taskId}/reanalyze`。
+3. 后端会复用同一个 `taskId`，状态重置为 `PENDING`，并追加阶段 `REANALYZE_REQUESTED`。
+4. 前端继续订阅原 `taskId` 的 SSE（可重连或复用追踪逻辑），按新一轮 `task-progress` 刷新。
+5. 重分析结束后同样按 `SUCCESS`/`FAILED` 收敛并拉取一次详情。
+
 后端事件：
 
 - `connected`：连接握手成功
 - `task-progress`：任务进度变更
+- `onSuccess`：任务成功事件（在 `status=SUCCESS` 时额外推送）
 
 注意：后端在终态会关闭 SSE，因此前端需要把“正常关闭”当成可能的完成信号之一。
+
+终态建议判定顺序：
+
+1. 收到 `task-progress` 且 `status=FAILED` -> 直接失败收敛。
+2. 收到 `onSuccess` -> 按成功收敛（再拉一次详情做最终一致）。
+3. 连接关闭但未拿到明确终态 -> 立即补拉 `GET /api/analysis/tasks/{taskId}` 判定。
+
+补充：重分析是同 `taskId` 的新生命周期，前端不要新建本地任务项，应清空该任务旧的结果展示（SQL/图表/洞察）并等待新进度覆盖。
 
 ---
 
@@ -115,6 +140,12 @@ Jimmer 生成客户端主要用于 HTTP API；SSE 建议独立工具实现：
 
 Store 侧只关心订阅结果，不关心底层 SSE 细节。
 
+SSE 错误事件（认证失效）补充：
+
+- 未登录访问 `/events` 时，后端返回 `event: error`。
+- `data` 结构包含：`code`（`AUTH_NOT_LOGIN`）、`message`、`timestamp`（数字毫秒时间戳）。
+- 前端应在该事件里统一执行“清会话 + 跳登录”。
+
 ---
 
 ## 7. Pinia 设计（AI 代码生成时遵守）
@@ -122,13 +153,13 @@ Store 侧只关心订阅结果，不关心底层 SSE 细节。
 ### `useAuthStore`
 
 - 状态：`profile`、`isAuthenticated`、`isReady`
-- 动作：`bootstrap`、`loginByPassword`、`loginByCode`、`logout`、`uploadAvatar`
+- 动作：`bootstrap`、`loginByPassword`、`loginByCode`、`logout`、`uploadAvatar`、`updateMe`
 - 字段：`profile.avatar` 可直接用于头像展示（为空时前端走默认头像）
 
 ### `useAnalysisStore`
 
 - 状态：`taskList`、`taskDetailMap`、`trackingMap`
-- 动作：`createTask`、`trackTask`、`stopTracking`、`fetchTaskDetail`、`fetchTaskList`、`renameTask`、`deleteTask`
+- 动作：`createTask`、`reanalyzeTask`、`trackTask`、`stopTracking`、`fetchTaskDetail`、`fetchTaskList`、`renameTask`、`deleteTask`
 - 规则：SSE 更新“过程态”，详情接口覆盖“最终态”
 
 分析任务管理约定：
@@ -136,6 +167,14 @@ Store 侧只关心订阅结果，不关心底层 SSE 细节。
 - `AnalysisTaskSummaryView` / `AnalysisTaskDetailView` 包含 `name` 字段，可直接用于列表标题与详情头部。
 - 重命名接口：`PATCH /api/analysis/tasks/{taskId}/name`，请求体 `AnalysisTaskRenameInput`（`name` 非空）。
 - 删除接口：`DELETE /api/analysis/tasks/{taskId}`，成功后前端应从本地列表移除并停止对应 SSE 跟踪。
+- 重分析接口：`POST /api/analysis/tasks/{taskId}/reanalyze`，仅 `FAILED` 任务可调用，成功后仍使用原 `taskId` 跟踪。
+
+重分析按钮交互建议：
+
+- 仅在 `FAILED` 状态显示“重新分析”。
+- 点击后立即禁用按钮，直到收到首个新进度或详情刷新为 `PENDING/RUNNING`。
+- 如果返回“仅失败任务支持重新分析”，提示后刷新详情。
+- 如果返回 401，走统一登录失效处理（清会话并跳转登录页）。
 
 ### `useDataSourceStore`
 
@@ -179,8 +218,9 @@ Store 侧只关心订阅结果，不关心底层 SSE 细节。
 1. 先接入 Jimmer `services` 与 `model`，禁止手写重复 DTO。
 2. 完成 `authStore.bootstrap()` 并打通登录态守卫。
 3. 完成“创建任务 -> SSE 订阅 -> 终态收敛”闭环。
-4. 用 `AnalysisStatus` 枚举驱动任务 UI 状态标签。
-5. 任务详情页使用后端 `option` 渲染 ECharts。
+4. 完成“失败任务原地重分析（同 taskId）-> SSE 再跟踪 -> 终态收敛”闭环。
+5. 用 `AnalysisStatus` 枚举驱动任务 UI 状态标签。
+6. 任务详情页使用后端 `option` 渲染 ECharts。
 
 ---
 
@@ -191,6 +231,7 @@ Store 侧只关心订阅结果，不关心底层 SSE 细节。
 - 本地推断成功：应以任务详情接口结果为最终准。
 - 手写类型覆盖生成类型：后续后端字段变更会导致双份类型漂移。
 - 创建数据源强制手填 `schemaInfo`：会增加录入成本且易过期，当前应以后端自动探测为主。
+- 重分析后新建本地任务项：会造成同一任务重复显示。应复用原任务项并覆盖状态与结果。
 
 ---
 
@@ -199,6 +240,6 @@ Store 侧只关心订阅结果，不关心底层 SSE 细节。
 1. `login -> me -> logout`
 2. 数据源列表/详情/编辑
 3. 创建分析任务
-4. SSE 接入（`connected`/`task-progress`）
+4. SSE 接入（`connected`/`task-progress`/`onSuccess`）
 5. 任务详情 + ECharts
 
