@@ -111,12 +111,23 @@ class DataAnalysisAgent(
             result
         } catch (ex: Exception) {
             log.error("[分析Agent] 任务分析失败，taskId={}, userId={}, stage={}", taskId, request.userId, lastStage, ex)
-            runBlockingTaskPersistence {
-                analysisTaskService.markFailed(
+            val errorMessage = ex.message ?: "分析任务执行失败"
+            try {
+                runBlockingTaskPersistence {
+                    analysisTaskService.markFailed(
+                        taskId = taskId,
+                        stage = lastStage,
+                        errorMessage = errorMessage,
+                        executionTime = System.currentTimeMillis() - startTime
+                    )
+                }
+            } catch (markFailedEx: Exception) {
+                log.error("[分析Agent] 写入失败状态异常，转兜底SSE通知，taskId={}, stage={}", taskId, lastStage, markFailedEx)
+                analysisTaskService.notifyFailureFallback(
                     taskId = taskId,
                     stage = lastStage,
-                    errorMessage = ex.message ?: "分析任务执行失败",
-                    executionTime = System.currentTimeMillis() - startTime
+                    errorMessage = errorMessage,
+                    details = jsonDetailsOf("fallback" to true, "markFailedError" to markFailedEx.message)
                 )
             }
             throw ex
