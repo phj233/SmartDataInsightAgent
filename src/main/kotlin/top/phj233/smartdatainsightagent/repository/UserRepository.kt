@@ -47,5 +47,7 @@ interface UserRepository : KRepository<User, Long> {
         )
     }.execute().firstOrNull()
 
+    fun findUserByUsername(username: String): User?
+
     fun findUserByEmail(email: String): User?
 }

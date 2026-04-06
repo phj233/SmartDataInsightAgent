@@ -29,12 +29,23 @@ input UserSendCodeDTO {
 }
 
 // API 出参: 当前登录用户信息
-input UserMeResponse {
+UserMeResponse {
     id
     username
     email
     avatar
     enabled
     roles: List<String>
+}
+
+input UserUpdateProfileDTO {
+    @Size(min = 6, max = 32, message = "用户名长度必须在6-32之间")
+    username?
+    @Size(min = 6, max = 64, message = "密码长度必须在6-64之间")
+    password?
+    @Email(message = "邮箱格式错误")
+    email?
+    avatar
+    code: String?
 }
 

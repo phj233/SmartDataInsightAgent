@@ -2,16 +2,14 @@ package top.phj233.smartdatainsightagent.service
 
 import cn.dev33.satoken.secure.BCrypt
 import cn.dev33.satoken.stp.StpUtil
+import org.babyfish.jimmer.sql.ast.mutation.AssociatedSaveMode
 import org.babyfish.jimmer.sql.ast.mutation.SaveMode
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import top.phj233.smartdatainsightagent.entity.addBy
 import top.phj233.smartdatainsightagent.entity.copy
-import top.phj233.smartdatainsightagent.entity.dto.UserLoginByCodeDTO
-import top.phj233.smartdatainsightagent.entity.dto.UserLoginDTO
-import top.phj233.smartdatainsightagent.entity.dto.UserMeResponse
-import top.phj233.smartdatainsightagent.entity.dto.UserRegisterDTO
+import top.phj233.smartdatainsightagent.entity.dto.*
 import top.phj233.smartdatainsightagent.exception.UserException
 import top.phj233.smartdatainsightagent.repository.UserRepository
 import top.phj233.smartdatainsightagent.service.storage.MinioService
@@ -75,6 +73,22 @@ class UserService(
     fun logout() {
         logger.info("[用户服务] 用户登出，userId={}", StpUtil.getLoginIdDefaultNull())
         StpUtil.logout()
+    }
+
+    /**
+     * 修改当前登录用户信息（支持用户名、密码、邮箱、头像）。
+     */
+    fun updateCurrentUser(updateDTO: UserUpdateProfileDTO): UserMeResponse {
+        val loginId = StpUtil.getLoginIdAsLong()
+        val user = userRepository.findNullable(loginId)
+            ?: throw UserException.userNotFound("用户不存在")
+        logger.info("[用户服务] 更新用户信息请求，userId={}, updateDTO={}", loginId, updateDTO)
+        val updatedUser = user.copy {
+            updateDTO.password?.let { password = BCrypt.hashpw(it) }
+        }
+        userRepository.save(updatedUser, SaveMode.UPDATE_ONLY, AssociatedSaveMode.UPDATE, null)
+        logger.info("[用户服务] 用户信息已更新，userId={}", loginId)
+        return getCurrentUser()
     }
 
     /**

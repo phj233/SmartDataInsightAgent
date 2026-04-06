@@ -31,6 +31,14 @@ class UserController(
     }
 
     /**
+     * 修改当前登录用户信息。
+     */
+    @PatchMapping("/me")
+    fun updateMe(@Valid @RequestBody dto: UserUpdateProfileDTO): UserMeResponse {
+        return userService.updateCurrentUser(dto)
+    }
+
+    /**
      * 上传当前登录用户头像。
      */
     @PostMapping("/avatar", consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
