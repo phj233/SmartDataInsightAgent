@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 import top.phj233.smartdatainsightagent.model.AnalysisTaskProgressEvent
+import top.phj233.smartdatainsightagent.repository.AnalysisTaskRepository
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -16,7 +17,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * @version
  */
 @Service
-class AnalysisSseService : AnalysisTaskProgressNotifier {
+class AnalysisSseService(
+    private val analysisTaskRepository: AnalysisTaskRepository
+) : AnalysisTaskProgressNotifier {
 
     private val logger = LoggerFactory.getLogger(AnalysisSseService::class.java)
     private val emitterRegistry = ConcurrentHashMap<Long, CopyOnWriteArrayList<SseEmitter>>()
@@ -52,6 +55,11 @@ class AnalysisSseService : AnalysisTaskProgressNotifier {
             return emitter
         }
 
+        if (!sendCurrentSnapshot(taskId, emitter)) {
+            remove(taskId, emitter)
+            return emitter
+        }
+
         logger.info("[SSE] 订阅成功，taskId={}, 当前连接数={}", taskId, emitters.size)
 
         return emitter
@@ -79,6 +87,10 @@ class AnalysisSseService : AnalysisTaskProgressNotifier {
             emitters.removeAll(stale.toSet())
         }
 
+        if (event.status == AnalysisStatus.SUCCESS) {
+            sendSuccessEvent(event.taskId, event)
+        }
+
         if (event.status == AnalysisStatus.SUCCESS || event.status == AnalysisStatus.FAILED) {
             logger.info("[SSE] 任务终态，关闭订阅，taskId={}, status={}", event.taskId, event.status)
             completeTask(event.taskId)
@@ -96,7 +108,7 @@ class AnalysisSseService : AnalysisTaskProgressNotifier {
         return try {
             emitter.send(event)
             true
-        } catch (ex: Throwable) {
+        } catch (_: Throwable) {
             logger.info("[SSE] 事件发送失败，关闭失效连接")
             safeComplete(emitter)
             false
@@ -108,6 +120,75 @@ class AnalysisSseService : AnalysisTaskProgressNotifier {
             emitter.complete()
         } catch (_: Exception) {
             // ignore
+        }
+    }
+
+    private fun sendSuccessEvent(taskId: Long, payload: AnalysisTaskProgressEvent) {
+        val emitters = emitterRegistry[taskId] ?: return
+        val stale = mutableListOf<SseEmitter>()
+        for (emitter in emitters) {
+            if (!safeSend(
+                    emitter,
+                    SseEmitter.event()
+                        .name("onSuccess")
+                        .id("$taskId-success-${payload.timestamp}")
+                        .data(payload)
+                )
+            ) {
+                stale += emitter
+            }
+        }
+        if (stale.isNotEmpty()) {
+            emitters.removeAll(stale.toSet())
+        }
+    }
+
+    private fun sendCurrentSnapshot(taskId: Long, emitter: SseEmitter): Boolean {
+        val task = analysisTaskRepository.findNullable(taskId) ?: return true
+        val latestStage = task.parameters.lastOrNull()
+        val snapshot = AnalysisTaskProgressEvent(
+            taskId = task.id,
+            status = task.status,
+            stage = latestStage?.stage ?: statusStage(task.status),
+            timestamp = latestStage?.timestamp ?: Instant.now().toString(),
+            details = latestStage?.details ?: emptyMap(),
+            generatedSql = task.generatedSql,
+            errorMessage = task.errorMessage
+        )
+
+        val sent = safeSend(
+            emitter,
+            SseEmitter.event()
+                .name("task-progress")
+                .id("${snapshot.taskId}-${snapshot.timestamp}")
+                .data(snapshot)
+        )
+
+        if (sent && task.status == AnalysisStatus.SUCCESS) {
+            safeSend(
+                emitter,
+                SseEmitter.event()
+                    .name("onSuccess")
+                    .id("${snapshot.taskId}-success-${snapshot.timestamp}")
+                    .data(snapshot)
+            )
+        }
+
+        if (sent && (task.status == AnalysisStatus.SUCCESS || task.status == AnalysisStatus.FAILED)) {
+            // Late subscriber: send terminal snapshot then close this connection.
+            safeComplete(emitter)
+            remove(taskId, emitter)
+        }
+
+        return sent
+    }
+
+    private fun statusStage(status: AnalysisStatus): String {
+        return when (status) {
+            AnalysisStatus.PENDING -> "TASK_CREATED"
+            AnalysisStatus.RUNNING -> "RUNNING"
+            AnalysisStatus.SUCCESS -> "COMPLETED"
+            AnalysisStatus.FAILED -> "FAILED"
         }
     }
 
