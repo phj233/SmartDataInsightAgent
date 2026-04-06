@@ -33,6 +33,8 @@ class AnalysisController(
 
     /**
      * 异步创建分析任务，立即返回 taskId，分析链路在后台执行。
+     * @param request 包含查询语句和数据源ID的分析执行请求
+     * @return 包含新创建的分析任务ID和初始状态的响应对象
      */
     @PostMapping("/tasks")
     fun createTask(@Valid @RequestBody request: AnalysisExecuteRequest): AnalysisTaskCreateResponse {
@@ -54,7 +56,22 @@ class AnalysisController(
     }
 
     /**
+     * 在失败任务上原地重新分析，不创建新任务。
+     * @param taskId 失败的分析任务ID
+     * @return 包含原任务ID和重试后状态的响应对象
+     */
+    @PostMapping("/tasks/{taskId}/reanalyze")
+    fun reanalyzeFailedTask(@PathVariable taskId: Long): AnalysisTaskCreateResponse {
+        val currentUserId = StpUtil.getLoginIdAsLong()
+        val request = analysisTaskService.reopenFailedTask(taskId, currentUserId)
+        analysisExecutionService.submit(taskId, request)
+        return AnalysisTaskCreateResponse(taskId = taskId, status = AnalysisStatus.PENDING)
+    }
+
+    /**
      * 订阅任务进度 SSE 事件。
+     * @param taskId 分析任务ID
+     * @return SseEmitter 对象，前端可以通过它接收分析任务的实时进度更新事件
      */
     @GetMapping("/tasks/{taskId}/events", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun subscribeTaskEvents(@PathVariable taskId: Long): SseEmitter {
@@ -105,6 +122,9 @@ class AnalysisController(
 
     /**
      * 重命名指定分析任务。
+     * @param taskId 分析任务ID
+     * @param input 包含新任务名称的请求体对象
+     * @return 包含更新后分析任务详细信息的视图对象
      */
     @PatchMapping("/tasks/{taskId}/name")
     fun renameTask(
@@ -117,6 +137,8 @@ class AnalysisController(
 
     /**
      * 使用 LLM 自动重命名指定分析任务。
+     * @param taskId 分析任务ID
+     * @return 包含更新后分析任务详细信息的视图对象
      */
     @PostMapping("/tasks/{taskId}/name/llm")
     suspend fun renameTaskByLlm(@PathVariable taskId: Long): AnalysisTaskDetailView {
@@ -126,6 +148,8 @@ class AnalysisController(
 
     /**
      * 删除指定分析任务。
+     * @param taskId 分析任务ID
+     * @return 无内容响应，表示删除成功
      */
     @DeleteMapping("/tasks/{taskId}")
     fun deleteTask(@PathVariable taskId: Long) {

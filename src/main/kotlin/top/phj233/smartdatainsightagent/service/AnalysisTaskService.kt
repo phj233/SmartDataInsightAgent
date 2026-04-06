@@ -7,11 +7,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.babyfish.jimmer.sql.ast.mutation.SaveMode
 import org.slf4j.LoggerFactory
-import org.slf4j.MDC
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import top.phj233.smartdatainsightagent.entity.AnalysisTask
-import top.phj233.smartdatainsightagent.entity.AnalysisTaskDraft
 import top.phj233.smartdatainsightagent.entity.copy
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskCreateInput
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskDetailView
@@ -24,7 +22,9 @@ import top.phj233.smartdatainsightagent.model.AnalysisTaskProgressEvent
 import top.phj233.smartdatainsightagent.model.AnalysisTaskStageRecord
 import top.phj233.smartdatainsightagent.repository.AnalysisTaskRepository
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
-import java.time.LocalDateTime
+import top.phj233.smartdatainsightagent.util.withMdc
+import top.phj233.smartdatainsightagent.util.withMdcSuspend
+import java.time.Instant
 
 /**
  * 分析任务服务
@@ -51,35 +51,30 @@ class AnalysisTaskService(
      */
     @Transactional
     fun createTask(request: AnalysisRequest): AnalysisTask {
-        MDC.put("userId", request.userId.toString())
-        try {
-            logger.info("[任务服务] 创建分析任务，userId={}, dataSourceId={}, queryLength={}", request.userId, request.dataSourceId, request.query.length)
-            validateCreateRequest(request)
-            val input = AnalysisTaskCreateInput(
-                name = request.query.take(20),
-                originalQuery = request.query
-            )
-            val created = analysisTaskRepository.save(
-                input.toEntity {
-                    user {
-                        id = request.userId
-                    }
-                    parameters = listOf(stageEntry(STAGE_TASK_CREATED, initialDetails(request)))
-                    status = AnalysisStatus.PENDING
-                },
-                SaveMode.INSERT_ONLY
-            )
-            MDC.put("taskId", created.id.toString())
+        logger.info("[任务服务] 创建分析任务，userId={}, dataSourceId={}, queryLength={}", request.userId, request.dataSourceId, request.query.length)
+        validateCreateRequest(request)
+        val input = AnalysisTaskCreateInput(
+            name = request.query.take(20),
+            originalQuery = request.query
+        )
+        val created = analysisTaskRepository.save(
+            input.toEntity {
+                user {
+                    id = request.userId
+                }
+                parameters = listOf(stageEntry(STAGE_TASK_CREATED, initialDetails(request)))
+                status = AnalysisStatus.PENDING
+            },
+            SaveMode.INSERT_ONLY
+        )
+        return withMdc("taskId" to created.id.toString()) {
             publishProgress(
                 taskId = created.id,
                 status = AnalysisStatus.PENDING,
                 stage = STAGE_TASK_CREATED,
                 details = created.parameters.lastOrNull()?.details ?: emptyMap()
             )
-            return created
-        } finally {
-            MDC.remove("taskId")
-            MDC.remove("userId")
+            created
         }
     }
 
@@ -137,7 +132,7 @@ class AnalysisTaskService(
                 status = AnalysisStatus.SUCCESS,
                 details = details + successDetails(result),
                 generatedSql = result.sqlQuery,
-                result = result,
+                result = listOf(result),
                 executionTime = executionTime,
                 errorMessage = null
             )
@@ -176,6 +171,30 @@ class AnalysisTaskService(
     }
 
     /**
+     * 当任务持久化失败或状态更新失败时，兜底推送失败事件，确保前端及时感知并结束 SSE。
+     */
+    fun notifyFailureFallback(
+        taskId: Long,
+        stage: String,
+        errorMessage: String,
+        details: Map<String, JsonNode> = emptyMap()
+    ) {
+        val existing = analysisTaskRepository.findNullable(taskId)
+        if (existing?.status in TERMINAL_STATUSES) {
+            logger.info("[任务服务] 任务已终态，跳过失败兜底通知，taskId={}, status={}", taskId, existing?.status)
+            return
+        }
+        logger.warn("[任务服务] 触发失败事件兜底通知，taskId={}, stage={}, error={}", taskId, stage, errorMessage)
+        publishProgress(
+            taskId = taskId,
+            status = AnalysisStatus.FAILED,
+            stage = stage,
+            details = details + mapOf("errorMessage" to toJsonNode(errorMessage)),
+            errorMessage = errorMessage
+        )
+    }
+
+    /**
      * 查询当前用户的任务摘要列表。
      *
      * 当 `status` 为空时返回该用户的全部任务摘要；否则按状态过滤。
@@ -209,13 +228,62 @@ class AnalysisTaskService(
     }
 
     /**
+     * 在失败任务上直接重开分析，不新建任务。
+     */
+    @Transactional
+    fun reopenFailedTask(taskId: Long, userId: Long): AnalysisRequest {
+        return withMdc("taskId" to taskId.toString(), "userId" to userId.toString()) {
+            val existing = findOwnedTask(taskId, userId)
+            if (existing.status != AnalysisStatus.FAILED) {
+                throw AnalysisTaskException.invalidTaskRequest("仅失败任务支持重新分析")
+            }
+
+            val query = existing.originalQuery.trim()
+            if (query.isBlank()) {
+                throw AnalysisTaskException.invalidTaskRequest("原任务查询为空，无法重新分析")
+            }
+
+            val request = AnalysisRequest(
+                query = query,
+                dataSourceId = extractDataSourceId(existing),
+                userId = userId
+            )
+
+            val updated = existing.copy {
+                status = AnalysisStatus.PENDING
+                generatedSql = null
+                result = null
+                executionTime = null
+                errorMessage = null
+                parameters = appendStage(
+                    existing.parameters,
+                    STAGE_REANALYZE_REQUESTED,
+                    mapOf(
+                        "inputMode" to toJsonNode(if (request.dataSourceId != null) "DATA_SOURCE" else "RAW_TEXT"),
+                        "queryLength" to toJsonNode(request.query.length)
+                    )
+                )
+            }
+            analysisTaskRepository.save(updated, SaveMode.UPDATE_ONLY)
+
+            publishProgress(
+                taskId = taskId,
+                status = AnalysisStatus.PENDING,
+                stage = STAGE_REANALYZE_REQUESTED,
+                details = updated.parameters.lastOrNull()?.details ?: emptyMap()
+            )
+
+            logger.info("[任务服务] 失败任务已重开，taskId={}, dataSourceId={}", taskId, request.dataSourceId)
+            request
+        }
+    }
+
+    /**
      * 重命名当前用户可访问的分析任务。
      */
     @Transactional
     fun renameTask(taskId: Long, userId: Long, name: String): AnalysisTaskDetailView {
-        MDC.put("taskId", taskId.toString())
-        MDC.put("userId", userId.toString())
-        try {
+        return withMdc("taskId" to taskId.toString()) {
             logger.info("[任务服务] 重命名任务，userId={}, taskId={}, name={}", userId, taskId, name)
             val normalizedName = name.trim()
             if (normalizedName.isBlank()) {
@@ -228,11 +296,8 @@ class AnalysisTaskService(
             }
             analysisTaskRepository.save(updated, SaveMode.UPDATE_ONLY)
 
-            return analysisTaskRepository.findDetailViewByIdAndUserId(taskId, userId)
+            analysisTaskRepository.findDetailViewByIdAndUserId(taskId, userId)
                 ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
-        } finally {
-            MDC.remove("taskId")
-            MDC.remove("userId")
         }
     }
 
@@ -241,18 +306,13 @@ class AnalysisTaskService(
      */
     @Transactional
     suspend fun renameTaskByLlm(taskId: Long, userId: Long): AnalysisTaskDetailView {
-        MDC.put("taskId", taskId.toString())
-        MDC.put("userId", userId.toString())
-        try {
+        return withMdcSuspend("taskId" to taskId.toString()) {
             val existing = findOwnedTask(taskId, userId)
             val llmName = generateNameByLlm(existing.originalQuery, existing.name)
             logger.info("[任务服务] LLM重命名任务，userId={}, taskId={}, generatedName={}", userId, taskId, llmName)
-            return withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 renameTask(taskId, userId, llmName)
             }
-        } finally {
-            MDC.remove("taskId")
-            MDC.remove("userId")
         }
     }
 
@@ -261,17 +321,12 @@ class AnalysisTaskService(
      */
     @Transactional
     fun deleteTask(taskId: Long, userId: Long) {
-        MDC.put("taskId", taskId.toString())
-        MDC.put("userId", userId.toString())
-        try {
+        withMdc("taskId" to taskId.toString()) {
             logger.info("[任务服务] 删除任务，userId={}, taskId={}", userId, taskId)
             val affectedRows = analysisTaskRepository.deleteByIdAndUserId(taskId, userId)
             if (affectedRows == 0) {
                 throw AnalysisTaskException.taskNotFound("分析任务不存在: $taskId")
             }
-        } finally {
-            MDC.remove("taskId")
-            MDC.remove("userId")
         }
     }
 
@@ -283,39 +338,45 @@ class AnalysisTaskService(
      * @throws AnalysisTaskException 当任务不存在或状态流转非法时抛出
      */
     private fun applyUpdate(taskId: Long, command: TaskUpdateCommand) {
-        MDC.put("taskId", taskId.toString())
-        try {
+        withMdc("taskId" to taskId.toString()) {
             logger.debug("[任务服务] 应用任务状态更新，taskId={}, targetStatus={}, stage={}", taskId, command.status, command.stage)
             val existing = findTask(taskId)
-            MDC.put("userId", existing.userId.toString())
-            validateTransition(existing, command.status)
+            withMdc("userId" to existing.userId.toString()) {
+                validateTransition(existing, command.status)
 
-            val updatedTask = AnalysisTaskDraft.`$`.produce(existing) {
-                status = command.status
-                parameters = appendStage(existing.parameters, command.stage, command.details)
+                val updatedTask = existing.copy {
+                    status = command.status
+                    parameters = appendStage(existing.parameters, command.stage, command.details)
+                    generatedSql = command.generatedSql ?: generatedSql
+                    result = command.result ?: result
+                    executionTime = command.executionTime ?: executionTime
+                    errorMessage = command.errorMessage ?: errorMessage
+                }
 
-                command.generatedSql?.let { generatedSql = it }
-                command.result?.let { result = listOf(it) }
-                command.executionTime?.let { executionTime = it }
-                errorMessage = command.errorMessage
+                analysisTaskRepository.save(updatedTask, SaveMode.UPDATE_ONLY)
+
+                publishProgress(
+                    taskId = taskId,
+                    status = command.status,
+                    stage = command.stage,
+                    details = command.details,
+                    generatedSql = command.generatedSql,
+                    errorMessage = command.errorMessage
+                )
             }
-
-            analysisTaskRepository.save(updatedTask, SaveMode.UPDATE_ONLY)
-
-            publishProgress(
-                taskId = taskId,
-                status = command.status,
-                stage = command.stage,
-                details = command.details,
-                generatedSql = command.generatedSql,
-                errorMessage = command.errorMessage
-            )
-        } finally {
-            MDC.remove("taskId")
-            MDC.remove("userId")
         }
     }
 
+    /**
+     * 推送任务进度事件到通知系统，包含当前状态、阶段、附加详情以及可选的生成 SQL 和错误信息。
+     * @param taskId 任务ID
+     * @param status 当前任务状态
+     * @param stage 当前执行阶段
+     * @param details 当前阶段的附加信息
+     * @param generatedSql 当前阶段若已生成 SQL，可一并传入
+     * @param errorMessage 当前阶段若发生错误，可一并传入错误信息
+     * @throws Exception 当通知系统发生错误时抛出（调用方会捕获并记录日志，但不会中断任务执行）
+     */
     private fun publishProgress(
         taskId: Long,
         status: AnalysisStatus,
@@ -330,7 +391,7 @@ class AnalysisTaskService(
                     taskId = taskId,
                     status = status,
                     stage = stage,
-                    timestamp = LocalDateTime.now().toString(),
+                    timestamp = nowTimestamp(),
                     details = details,
                     generatedSql = generatedSql,
                     errorMessage = errorMessage
@@ -438,6 +499,17 @@ class AnalysisTaskService(
         put("hasSqlQuery", toJsonNode(result.sqlQuery != null))
     }
 
+    private fun extractDataSourceId(task: AnalysisTask): Long? {
+        val createdStage = task.parameters.firstOrNull { it.stage == STAGE_TASK_CREATED }
+        val node = createdStage?.details?.get("dataSourceId") ?: return null
+        val value = when {
+            node.isIntegralNumber -> node.asLong()
+            node.isTextual -> node.asText().toLongOrNull()
+            else -> null
+        }
+        return value?.takeIf { it > 0 }
+    }
+
     /**
      * 构建单条阶段记录对象。
      *
@@ -451,10 +523,12 @@ class AnalysisTaskService(
     ): AnalysisTaskStageRecord {
         return AnalysisTaskStageRecord(
             stage = stage,
-            timestamp = LocalDateTime.now().toString(),
+            timestamp = nowTimestamp(),
             details = details
         )
     }
+
+    private fun nowTimestamp(): String = Instant.now().toString()
 
     private fun toJsonNode(value: Any?): JsonNode {
         return objectMapper.valueToTree(value)
@@ -503,6 +577,8 @@ class AnalysisTaskService(
         const val STAGE_PREDICTION_GENERATING = "PREDICTION_GENERATING"
         const val STAGE_REPORT_GENERATING = "REPORT_GENERATING"
         const val STAGE_COMPLETED = "COMPLETED"
+        const val STAGE_ASYNC_EXECUTION_FAILED = "ASYNC_EXECUTION_FAILED"
+        const val STAGE_REANALYZE_REQUESTED = "REANALYZE_REQUESTED"
     }
 
     private data class TaskUpdateCommand(
@@ -510,7 +586,7 @@ class AnalysisTaskService(
         val status: AnalysisStatus,
         val details: Map<String, JsonNode> = emptyMap(),
         val generatedSql: String? = null,
-        val result: AnalysisResult? = null,
+        val result: List<AnalysisResult>? = null,
         val executionTime: Long? = null,
         val errorMessage: String? = null
     )
