@@ -1,33 +1,24 @@
 # SmartDataInsightAgent
 
-一个基于 **Spring Boot 3 + Kotlin + Jimmer + Spring AI** 的智能数据分析服务。
+基于 `Spring Boot 3 + Kotlin + Jimmer + Spring AI + Sa-Token` 的智能数据分析后端。
 
-项目目标：把自然语言分析请求转成可追踪、可回放、可视化的分析任务结果。
+项目目标是把用户的自然语言分析请求转成可追踪、可回放、可视化的分析任务结果，并支持两种输入模式：
 
-## 当前能力概览
-
-- 登录用户发起分析任务，支持同步执行与异步任务模式。
-- 异步模式支持 SSE 进度推送：先返回 `taskId`，再订阅实时状态。
-- 可按 `dataSourceId` 连接外部数据库进行只读分析（`POSTGRESQL`、`MYSQL`）。
-- 无数据源时可直接解析 JSON/Markdown 表格/CSV/TSV，失败后回退 LLM 提取。
-- 任务全程持久化阶段轨迹、状态、SQL、结果、耗时、错误信息。
-- 输出 AI 洞察文本和前端可直接渲染的 ECharts `option`。
-- 用户侧已提供 `me`、`logout`、`avatar` 上传能力。
-- Sa-Token 未认证场景已有全局异常处理，普通接口返回 401 JSON，SSE 返回 `event: error`。
+- 外部数据源分析：基于 `dataSourceId` 连接用户自己的 PostgreSQL 或 MySQL 数据库，生成只读 SQL 并执行。
+- 原始文本分析：用户直接提交 JSON、Markdown 表格、CSV、TSV 或自然语言数据描述，系统提取结构化数据后生成洞察和图表。
 
 ---
 
-## 目录
+## 当前能力
 
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [核心流程](#核心流程)
-- [认证与异常处理](#认证与异常处理)
-- [多数据源说明](#多数据源说明)
-- [配置说明](#配置说明)
-- [启动与测试](#启动与测试)
-- [当前限制](#当前限制)
-- [相关文档](#相关文档)
+- 支持异步任务模式：`POST /api/analysis/tasks`
+- 支持同步执行模式：`POST /api/analysis/execute`
+- 支持任务 SSE 进度订阅：`GET /api/analysis/tasks/{taskId}/events`
+- 支持任务列表、详情、重命名、LLM 自动命名、删除
+- 支持用户数据源管理、启停、Schema 探测和强制刷新
+- 支持登录、邮箱验证码、登出、当前用户信息、头像上传
+- 输出分析文本和可直接渲染的 ECharts `option`
+- 对未登录的普通接口返回 `401 JSON`，对未登录的 SSE 返回 `event: error`
 
 ---
 
@@ -37,33 +28,27 @@
 
 - Spring Boot `3.5.9`
 - Kotlin `2.1.0`
-- Spring Validation / Mail / Redis
+- Java `21`
+- Coroutines
 
-### 数据与 ORM
+### 数据与存储
 
 - Jimmer `0.10.6`
-- PostgreSQL Driver
-- MySQL Driver
-- JdbcTemplate（外部数据源查询）
+- PostgreSQL
+- MySQL
+- Redis
+- MinIO
 
-### AI 与分析
+### AI 能力
 
 - Spring AI `1.1.2`
 - DeepSeek Chat Model
 
-### 认证与会话
+### 认证与接口契约
 
 - Sa-Token `1.44.0`
-- Redis（会话、验证码）
-
-### 对外契约生成
-
-- Jimmer OpenAPI（`/openapi.yml`, `/openapi.html`）
-- Jimmer TypeScript Zip（`/ts.zip`）
-
-### 对象存储
-
-- MinIO（头像上传，按文件内容哈希复用链接）
+- Jimmer OpenAPI: `/openapi.yml`、`/openapi.html`
+- Jimmer TypeScript Zip: `/ts.zip`
 
 ---
 
@@ -71,24 +56,20 @@
 
 ```text
 src/main/
-├─ dto/
-│  ├─ AnalysisTask.dto
-│  ├─ DataSource.dto
-│  └─ User.dto
+├─ dto/                                # Jimmer DTO 定义
 ├─ kotlin/top/phj233/smartdatainsightagent/
-│  ├─ config/                  # Sa-Token/CORS/MinIO/MDC
-│  ├─ controller/              # Analysis/User/DataSource API
-│  ├─ entity/                  # Jimmer 实体与枚举
-│  ├─ exception/               # 业务异常 + 全局异常处理
-│  ├─ interceptor/             # 审计字段拦截
-│  ├─ model/                   # 分析请求/结果/进度事件
-│  ├─ repository/              # Jimmer Repository
-│  ├─ service/
-│  │  ├─ agent/                # 分析/SQL/可视化 Agent
-│  │  ├─ ai/                   # DeepSeek 封装
-│  │  ├─ data/                 # 多数据源/解析/执行
-│  │  └─ storage/              # MinIO 服务
-│  └─ util/
+│  ├─ config/                          # Sa-Token / MinIO / Jimmer / Trace
+│  ├─ controller/                      # Analysis / DataSource / User API
+│  ├─ entity/                          # Jimmer 实体与枚举
+│  ├─ exception/                       # 业务异常与全局异常处理
+│  ├─ interceptor/                     # 审计字段拦截
+│  ├─ model/                           # 请求、结果、进度事件、可视化模型
+│  ├─ repository/                      # Jimmer Repository
+│  └─ service/
+│     ├─ agent/                        # Query / Analysis / Visualization Agent
+│     ├─ ai/                           # DeepSeek 封装
+│     ├─ data/                         # 外部数据源、Schema 探测、执行器、文本解析
+│     └─ storage/                      # MinIO 服务
 └─ resources/
    ├─ application.yml
    ├─ application-secrets.yml
@@ -100,134 +81,205 @@ src/main/
 
 ## 核心流程
 
-### 1) 分析任务主流程（异步，推荐）
+### 1. 异步任务主流程
 
-后端实现路径：`AnalysisController.createTask` -> `AnalysisTaskService.createTask` -> `AnalysisExecutionService.submit` -> `DataAnalysisAgent.analyzeDataForTask`。
+推荐使用异步任务 + SSE。
 
-完整时序如下：
+调用链：
 
-1. 前端调用 `POST /api/analysis/tasks`，提交 `query` 与可选 `dataSourceId`。
-2. 后端先做请求归一化（`query.trim()`），并绑定当前登录 `userId`。
-3. 创建任务记录：
-   - 写入 `AnalysisTask`（初始 `status=PENDING`）
-   - 追加首条阶段 `TASK_CREATED`
-   - 任务名默认取 `query` 前 20 字符
-4. 接口立即返回 `taskId + status`（不会等待 AI/SQL 执行完成）。
-5. 后端将任务提交到协程后台执行器（`SupervisorJob + Dispatchers.Default`）。
-6. 执行过程中每到关键节点，任务服务会：
-   - 持久化最新阶段轨迹（`parameters`）
-   - 刷新任务状态（`RUNNING/SUCCESS/FAILED`）
-   - 通过 SSE 通知器推送 `task-progress`
-7. 成功分支：写入 `result`、`generatedSql`、`executionTime`，状态转为 `SUCCESS`。
-8. 失败分支：记录 `errorMessage` 与失败阶段，状态转为 `FAILED`。
-9. SSE 在任务到终态（`SUCCESS/FAILED`）后由服务端主动关闭当前任务的订阅连接。
+`AnalysisController.createTask`
+-> `AnalysisTaskService.createTask`
+-> `AnalysisExecutionService.submit`
+-> `DataAnalysisAgent.analyzeDataForTask`
 
-### 2) 任务状态与阶段语义
+执行步骤：
 
-任务状态机：
+1. 前端调用 `POST /api/analysis/tasks`，提交 `query` 和可选的 `dataSourceId`。
+2. 后端会先对 `query` 做 `trim()`，并从当前登录态中读取 `userId`。
+3. 创建 `AnalysisTask` 记录，初始状态为 `PENDING`，并写入第一条阶段记录 `TASK_CREATED`。
+4. 接口立即返回 `taskId` 和当前状态，不等待 AI 或 SQL 执行完成。
+5. `AnalysisExecutionService` 使用 `SupervisorJob + Dispatchers.Default` 在后台协程执行分析任务。
+6. 分析过程中，每到一个关键阶段都会落库阶段记录，并通过 SSE 推送 `task-progress`。
+7. 成功时写入 `generatedSql`、`result`、`executionTime`，状态变为 `SUCCESS`。
+8. 失败时写入 `errorMessage` 和失败阶段，状态变为 `FAILED`。
+9. 任务进入终态后，SSE 服务端会主动关闭该任务的订阅连接。
 
-- `PENDING`：任务已创建，等待后台执行。
-- `RUNNING`：分析链路进行中。
-- `SUCCESS`：分析完成，结果可读取。
-- `FAILED`：分析失败，可读取失败阶段和错误信息。
+### 2. 分析链路分支
 
-常见阶段（按出现频率）：
+#### 有 `dataSourceId`
 
-- 通用：`TASK_CREATED`、`INSIGHTS_GENERATING`、`VISUALIZATION_GENERATING`、`COMPLETED`
-- 数据源路径：`INTENT_ANALYZING`、`INTENT_RESOLVED`、`SQL_GENERATING`、`SQL_GENERATED`、`QUERY_EXECUTING`、`QUERY_EXECUTED`
-- 原始文本路径：`RAW_TEXT_PARSING`、`NATURAL_LANGUAGE_EXTRACTION`
+适用于结构化数据库分析。
+
+1. `DataAnalysisAgent` 先识别用户意图。
+2. 根据意图选择对应流程：
+   - `DATA_QUERY`
+   - `TREND_ANALYSIS`
+   - `PREDICTION`
+   - `REPORT_GENERATION`
+3. `QueryParserAgent` 基于用户问题、数据源和 Schema 生成 SQL。
+4. `QueryExecutorService` 对 SQL 做只读校验后执行。
+5. 生成洞察文本和图表建议。
+
+#### 无 `dataSourceId`
+
+适用于文本直传分析。
+
+1. 先进入 `RAW_TEXT_PARSING`。
+2. `RawTextDataParserService` 优先按规则解析：
+   - JSON 数组
+   - Markdown 表格
+   - CSV
+   - TSV
+3. 如果规则解析失败，则进入 `NATURAL_LANGUAGE_EXTRACTION`。
+4. `NaturalLanguageDataExtractionService` 调用 LLM 从自然语言中提取结构化数据。
+5. 生成洞察文本和图表建议。
+
+### 3. 任务状态和阶段
+
+任务状态：
+
+- `PENDING`：任务已创建，等待执行
+- `RUNNING`：任务执行中
+- `SUCCESS`：执行成功
+- `FAILED`：执行失败
+
+常见阶段：
+
+- 通用阶段：`TASK_CREATED`、`INSIGHTS_GENERATING`、`VISUALIZATION_GENERATING`、`COMPLETED`
+- 数据源分析：`INTENT_ANALYZING`、`INTENT_RESOLVED`、`SQL_GENERATING`、`SQL_GENERATED`、`QUERY_EXECUTING`、`QUERY_EXECUTED`
+- 原始文本分析：`RAW_TEXT_PARSING`、`NATURAL_LANGUAGE_EXTRACTION`
 - 特殊意图：`PREDICTION_GENERATING`、`REPORT_GENERATING`
 
-### 3) SSE 订阅与事件语义
+### 4. SSE 订阅模型
 
-订阅端点：`GET /api/analysis/tasks/{taskId}/events`（`text/event-stream`）。
+订阅端点：
+
+`GET /api/analysis/tasks/{taskId}/events`
 
 事件类型：
 
-- `connected`：握手成功，表示订阅建立。
-- `task-progress`：任务进度事件，包含阶段与状态变化。
+- `connected`：SSE 握手成功
+- `task-progress`：任务阶段或状态发生变化
 
 `task-progress` 关键字段：
 
-- `taskId`：任务 ID
-- `status`：当前任务状态
-- `stage`：当前阶段名
-- `timestamp`：事件时间
-- `details`：阶段上下文信息（如 `rowCount`、`intentType`）
-- `generatedSql`：有 SQL 时返回
-- `errorMessage`：失败时返回
+- `taskId`
+- `status`
+- `stage`
+- `timestamp`
+- `details`
+- `generatedSql`
+- `errorMessage`
 
-未登录访问 SSE 时，统一异常处理会返回 `event: error`（401 语义）。
+前端推荐流程：
 
-### 4) 前端推荐编排（SSE + 详情兜底）
-
-1. 调用创建任务接口拿 `taskId`。
-2. 立即建立 SSE 订阅，并监听 `connected/task-progress`。
-3. 同时以低频率轮询 `GET /api/analysis/tasks/{taskId}` 兜底，防止断线漏事件。
-4. 收到终态后主动停止 SSE 与轮询。
-5. 再拉取一次详情作为最终一致结果并渲染。
-
-### 5) 数据输入模式与意图
-
-- **有 `dataSourceId`**：先意图识别，再走 SQL 生成与查询流程。
-- **无 `dataSourceId`**：先规则解析原始文本，失败后回退 LLM 抽取结构化数据。
-
-支持意图：
-
-- `DATA_QUERY`
-- `TREND_ANALYSIS`
-- `PREDICTION`
-- `REPORT_GENERATION`
-
-### 6) 同步执行接口（补充）
-
-项目仍保留 `POST /api/analysis/execute` 同步执行入口：
-
-- 请求线程等待完整分析结果返回。
-- 内部也会创建并更新任务记录。
-- 联调和生产场景建议优先使用异步任务 + SSE 模式。
+1. 创建任务，拿到 `taskId`
+2. 立即建立 SSE 订阅
+3. 同时低频轮询 `GET /api/analysis/tasks/{taskId}` 兜底
+4. 收到 `SUCCESS` 或 `FAILED` 后关闭轮询
+5. 再拉一次详情作为最终一致结果
 
 ---
 
-## 认证与异常处理
+## 接口概览
 
-### 认证策略
+### 分析任务
 
-- `/api/**` 默认要求登录。
-- 白名单：`/api/user/login`、`/api/user/register`、`/api/user/sendCode`、`/api/user/loginByCode`、`/openapi.html`、`/openapi.yml`、`/ts.zip`、`/error`。
-- 预检请求（`OPTIONS`）放行。
+- `POST /api/analysis/tasks`：创建异步分析任务
+- `GET /api/analysis/tasks/{taskId}/events`：订阅任务 SSE
+- `POST /api/analysis/execute`：同步执行分析
+- `GET /api/analysis/tasks`：查询当前用户任务列表
+- `GET /api/analysis/tasks/{taskId}`：查询任务详情
+- `PATCH /api/analysis/tasks/{taskId}/name`：手动重命名任务
+- `POST /api/analysis/tasks/{taskId}/name/llm`：LLM 自动命名
+- `DELETE /api/analysis/tasks/{taskId}`：删除任务
 
-### 用户相关能力
+### 用户
 
-- `GET /api/user/me`：获取当前登录用户。
-- `POST /api/user/logout`：注销当前会话。
-- `POST /api/user/avatar`：上传头像（`multipart/form-data`, 字段名 `file`）。
+- `POST /api/user/sendCode`
+- `POST /api/user/register`
+- `POST /api/user/login`
+- `POST /api/user/loginByCode`
+- `GET /api/user/me`
+- `PATCH /api/user/me`
+- `POST /api/user/logout`
+- `POST /api/user/avatar`
 
-### 全局未认证异常
+### 数据源
 
-- 捕获 `NotLoginException`。
-- 普通 HTTP 返回 401 JSON（`code=AUTH_NOT_LOGIN`）。
-- SSE 请求返回 `text/event-stream` 的 `event: error`，避免前端把未认证误判为网络异常。
+- `POST /api/data-sources`
+- `GET /api/data-sources`
+- `GET /api/data-sources/{id}`
+- `PUT /api/data-sources/{id}`
+- `PATCH /api/data-sources/{id}/activate`
+- `PATCH /api/data-sources/{id}/deactivate`
+
+---
+
+## 关键请求示例
+
+### 1. 创建异步分析任务
+
+```json
+{
+  "query": "统计最近30天订单金额趋势",
+  "dataSourceId": 1
+}
+```
+
+返回：
+
+```json
+{
+  "taskId": 123,
+  "status": "PENDING"
+}
+```
+
+### 2. 同步执行分析
+
+```json
+{
+  "query": "统计最近30天订单金额趋势",
+  "dataSourceId": 1
+}
+```
+
+### 3. 直接分析原始文本
+
+```json
+{
+  "query": "month,sales,profit\nJan,1200,200\nFeb,1500,260"
+}
+```
+
+### 4. 自然语言数据描述
+
+```json
+{
+  "query": "今年一季度华北、华东、华南的销售额分别是120万、150万、110万，利润分别是18万、16万、15万，请给出对比分析。"
+}
+```
 
 ---
 
 ## 多数据源说明
 
-### 已支持直连类型
+### 当前支持的外部数据源类型
 
 - `POSTGRESQL`
 - `MYSQL`
 
-### 实体枚举中存在但当前未支持直连
+枚举里存在但当前没有打通直连执行链路：
 
 - `CSV`
 - `EXCEL`
 
 ### `connectionConfig` 结构
 
-项目使用 `List<Map<String, String>>` 存储连接信息，运行时会扁平化为键值对。
+项目使用 `List<Map<String, String>>` 存储连接信息，运行时会被扁平化成普通键值对。
 
-示例（PostgreSQL）：
+PostgreSQL 示例：
 
 ```json
 [
@@ -240,31 +292,94 @@ src/main/
 ]
 ```
 
-也可通过 `url/jdbcUrl` 直接提供 JDBC 地址。
+MySQL 示例：
 
-### Schema 探测策略
+```json
+[
+  {"host": "127.0.0.1"},
+  {"port": "3306"},
+  {"database": "sales"},
+  {"username": "root"},
+  {"password": "secret"}
+]
+```
 
-- 创建数据源成功后，若 `schemaInfo` 为空，会自动探测并回填。
-- 更新数据源时会忽略请求体中的 `schemaInfo`，避免误覆盖。
-- 可通过 `refreshSchemaOnly=true` 触发强制刷新。
+也可以直接传 JDBC URL：
+
+```json
+[
+  {"url": "jdbc:postgresql://127.0.0.1:5432/analytics?currentSchema=public"},
+  {"username": "postgres"},
+  {"password": "secret"}
+]
+```
+
+### Schema 探测规则
+
+- 创建数据源后，如果 `schemaInfo` 为空，会自动探测并回填
+- 更新数据源时，会忽略请求中的 `schemaInfo`，避免误覆盖
+- 如需强制刷新 Schema，可调用：
+
+`PUT /api/data-sources/{id}?refreshSchemaOnly=true`
+
+---
+
+## 认证与异常处理
+
+### 默认认证策略
+
+`/api/**` 默认要求登录。
+
+白名单：
+
+- `/api/user/login`
+- `/api/user/register`
+- `/api/user/sendCode`
+- `/api/user/loginByCode`
+- `/openapi.html`
+- `/openapi.yml`
+- `/ts.zip`
+- `/error`
+
+`OPTIONS` 预检请求直接放行。
+
+### 未登录响应
+
+- 普通 HTTP 接口：返回 `401 JSON`
+- SSE 接口：返回 `event: error`，错误码为 `AUTH_NOT_LOGIN`
+
+这样前端可以区分“认证失败”和“网络断开”。
 
 ---
 
 ## 配置说明
 
-主配置：`src/main/resources/application.yml`
+主配置文件：
 
-通过 `spring.config.import` 引入：`application-secrets.yml`。
+`src/main/resources/application.yml`
 
-建议最少准备以下环境变量：
+通过：
+
+`spring.config.import=optional:classpath:application-secrets.yml`
+
+加载敏感配置。
+
+至少需要准备以下环境变量：
 
 - `DEEPSEEK_API_KEY`
-- `DB_URL` / `DB_USERNAME` / `DB_PASSWORD`
+- `DB_URL`
+- `DB_USERNAME`
+- `DB_PASSWORD`
 - `REDIS_HOST`
-- `MAIL_USERNAME` / `MAIL_PASSWORD`
-- `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET` / `MINIO_PUBLIC_BASE_URL`
+- `MAIL_USERNAME`
+- `MAIL_PASSWORD`
+- `MINIO_ENDPOINT`
+- `MINIO_ACCESS_KEY`
+- `MINIO_SECRET_KEY`
+- `MINIO_BUCKET`
+- `MINIO_PUBLIC_BASE_URL`
 
-默认开放的契约地址：
+对外开放的契约地址：
 
 - `GET /openapi.html`
 - `GET /openapi.yml`
@@ -274,46 +389,60 @@ src/main/
 
 ## 启动与测试
 
-### 启动依赖并运行
+### 1. 启动依赖
 
 ```powershell
 Set-Location "D:\programing\SmartDataInsightAgent"
 docker compose up -d
+```
+
+`compose.yaml` 当前包含：
+
+- PostgreSQL
+- Redis
+- MinIO
+
+### 2. 启动应用
+
+```powershell
+Set-Location "D:\programing\SmartDataInsightAgent"
 .\gradlew.bat bootRun
 ```
 
-> `compose.yaml` 当前包含 PostgreSQL、Redis、MinIO。
-
-### 运行测试
+### 3. 运行测试
 
 ```powershell
 Set-Location "D:\programing\SmartDataInsightAgent"
 .\gradlew.bat test -x processTestAot --no-daemon
 ```
 
-常见定向测试包括：
+当前测试覆盖主要包括：
 
+- `AnalysisTaskServiceTest`
 - `DataAnalysisAgentTest`
 - `VisualizationAgentTest`
-- `AnalysisTaskServiceTest`
+- `DataSourceServiceTest`
 - `DataSourceControllerTest`
+- `QueryExecutorServiceTest`
+- `RawTextDataParserServiceTest`
+- `NaturalLanguageDataExtractionServiceTest`
 - `GlobalExceptionHandlerTest`
 
 ---
 
 ## 当前限制
 
-1. 主库仍是单一 `spring.datasource`，外部数据源仅用于分析查询。
-2. 外部查询仅允许只读 SQL（`SELECT` / `WITH`），禁止危险语句。
-3. `CSV/EXCEL` 枚举已存在，但未实现外部直连查询链路。
-4. 原始文本结构化与洞察质量受 LLM 输出稳定性影响。
-5. 任务执行使用协程异步 + 阻塞式持久化，不是响应式全链路。
+1. 主库仍然只有一个 `spring.datasource`，Jimmer 只操作系统主库。
+2. 外部数据源目前只用于分析查询，不参与主库事务。
+3. 外部查询仅允许只读 SQL，核心目标是防止危险语句执行。
+4. `CSV`、`EXCEL` 虽然存在枚举定义，但未实现数据源直连执行。
+5. 原始文本提取和分析质量会受 LLM 输出稳定性影响。
+6. 任务执行使用协程异步 + 阻塞式持久化，不是全链路响应式架构。
 
 ---
 
 ## 相关文档
 
-- `docs/frontend-vue3-sse-guide.md`：面向 Vue3 + Pinia + Naive UI + Tailwind + Vue Router + ECharts 的前端接入指南（Jimmer TS 优先）。
-- `docs/multi-datasource.md`：多数据源能力说明。
-- `docs/multi-datasource-changes.md`：多数据源改动记录。
-
+- `docs/frontend-vue3-sse-guide.md`：前端对接 SSE 与 Jimmer TS 的建议
+- `docs/multi-datasource.md`：多数据源接入说明
+- `docs/multi-datasource-changes.md`：多数据源改动记录
