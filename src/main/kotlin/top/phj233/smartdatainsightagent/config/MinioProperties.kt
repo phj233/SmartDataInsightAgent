@@ -10,6 +10,5 @@ class MinioProperties {
     lateinit var accessKey: String
     lateinit var secretKey: String
     lateinit var bucket: String
-    lateinit var publicBaseUrl: String
 }
 

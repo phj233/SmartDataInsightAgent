@@ -137,7 +137,7 @@ class MinioService(
     }
 
     private fun buildDirectUrl(objectName: String): String {
-        val baseUrl = minioProperties.publicBaseUrl.trimEnd('/')
+        val baseUrl = minioProperties.endpoint.trimEnd('/')
         return "$baseUrl/${minioProperties.bucket}/$objectName"
     }
 
