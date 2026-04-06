@@ -18,8 +18,9 @@ class GlobalExceptionHandler {
 
     @ExceptionHandler(NotLoginException::class)
     fun handleNotLogin(ex: NotLoginException, request: HttpServletRequest): ResponseEntity<Any> {
+        val timestamp = Instant.now().toEpochMilli()
         if (isSseRequest(request)) {
-            val sseBody = "event: error\ndata: {\"code\":\"AUTH_NOT_LOGIN\",\"message\":\"${escapeJson(ex.message ?: "未登录或登录已过期")}\"}\n\n"
+            val sseBody = "event: error\ndata: {\"code\":\"AUTH_NOT_LOGIN\",\"message\":\"${escapeJson(ex.message ?: "未登录或登录已过期")}\",\"timestamp\":$timestamp}\n\n"
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .contentType(MediaType.TEXT_EVENT_STREAM)
                 .body(sseBody)
@@ -31,7 +32,7 @@ class GlobalExceptionHandler {
             code = "AUTH_NOT_LOGIN",
             message = ex.message ?: "未登录或登录已过期",
             path = request.requestURI,
-            timestamp = Instant.now()
+            timestamp = timestamp
         )
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(body)
     }
@@ -41,6 +42,7 @@ class GlobalExceptionHandler {
         return accept.contains(MediaType.TEXT_EVENT_STREAM_VALUE) || request.requestURI.endsWith("/events")
     }
 
+    // 简单的 JSON 转义，避免在 SSE 中输出不合法的 JSON 字符串。
     private fun escapeJson(raw: String): String {
         return raw.replace("\\", "\\\\").replace("\"", "\\\"")
     }
@@ -52,6 +54,6 @@ data class AuthErrorResponse(
     val code: String,
     val message: String,
     val path: String,
-    val timestamp: Instant
+    val timestamp: Long
 )
 
