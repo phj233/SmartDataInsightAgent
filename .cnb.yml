@@ -24,118 +24,88 @@ master:
           jobs:
             - name: docker_build_push
               script: |
-                # 安装依赖：docker客户端（docker.io）+ git
-                RUN apt-get remove -y docker-cli-plugins docker.io || true && \
-                apt-get autoremove -y && \
-                # 创建并授权cli-plugins目录（关键：确保可写）
-                mkdir -p /usr/libexec/docker/cli-plugins && \
-                chmod 755 /usr/libexec/docker/cli-plugins && \
-                # 更新缓存并安装docker.io
+                set -e  # 移至开头，全程错误终止
+                # 安装依赖：docker.io + git（直接安装，无需先移除）
                 apt-get update && \
-                apt-get install -y --no-install-recommends docker.io && \
-                # 清理缓存减小镜像体积
-                rm -rf /var/lib/apt/lists/*
-                set -e
+                apt-get install -y --no-install-recommends docker.io git && \
+                rm -rf /var/lib/apt/lists/* && \
+                # 创建并授权cli-plugins目录（确保可写）
+                mkdir -p /usr/libexec/docker/cli-plugins && \
+                chmod 755 /usr/libexec/docker/cli-plugins
+                
                 export DOCKER_BUILDKIT=1
                 REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
                 IMAGE_TAG="${IMAGE_TAG:-latest}"
                 SAME_IMAGE="${REGISTRY_BASE}:${IMAGE_TAG}"
                 BUILD_IMAGE="${REGISTRY_BASE}:build-${CNB_BUILD_ID}"
-
-                # 复用远端 latest 作为缓存来源，不影响首次构建。
+                
+                # 复用远端latest缓存（首次构建忽略失败）
                 docker pull "${REGISTRY_BASE}:latest" >/dev/null 2>&1 || true
                 docker build --pull --cache-from "${REGISTRY_BASE}:latest" -t "${BUILD_IMAGE}" .
                 docker tag "${BUILD_IMAGE}" "${SAME_IMAGE}"
                 docker push "${SAME_IMAGE}"
-
-                # 主分支仍额外维护 latest 标签，兼容现有部署逻辑。
+                
+                # 主分支维护latest标签
                 if [ "${IMAGE_TAG}" != "latest" ]; then
-                  docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
-                  docker push "${REGISTRY_BASE}:latest"
+                docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
+                docker push "${REGISTRY_BASE}:latest"
                 fi
-
+                
                 # 可选：推送自定义子路径镜像
                 if [ -n "${IMAGE_NAME:-}" ]; then
-                  CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
-                  docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
-                  docker push "${CUSTOM_IMAGE}"
-
-                  if [ "${IMAGE_TAG}" != "latest" ]; then
-                    CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
-                    docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
-                    docker push "${CUSTOM_LATEST_IMAGE}"
-                  fi
+                CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
+                docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
+                docker push "${CUSTOM_IMAGE}"
+              
+                if [ "${IMAGE_TAG}" != "latest" ]; then
+                CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
+                docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
+                docker push "${CUSTOM_LATEST_IMAGE}"
+                fi
                 fi
 
         - name: deploy_to_remote
           jobs:
             - name: ssh_deploy
               script: |
-                set -e
-                : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
-                : "${DEPLOY_USER:?Missing DEPLOY_USER}"
-                : "${DEPLOY_SSH_PRIVATE_KEY:?Missing DEPLOY_SSH_PRIVATE_KEY}"
-                : "${DEEPSEEK_API_KEY:?Missing DEEPSEEK_API_KEY}"
-                : "${DB_URL:?Missing DB_URL}"
-                : "${DB_USERNAME:?Missing DB_USERNAME}"
-                : "${DB_PASSWORD:?Missing DB_PASSWORD}"
-                : "${REDIS_HOST:?Missing REDIS_HOST}"
-                : "${MAIL_USERNAME:?Missing MAIL_USERNAME}"
-                : "${MAIL_PASSWORD:?Missing MAIL_PASSWORD}"
-                : "${MINIO_ENDPOINT:?Missing MINIO_ENDPOINT}"
-                : "${MINIO_ACCESS_KEY:?Missing MINIO_ACCESS_KEY}"
-                : "${MINIO_SECRET_KEY:?Missing MINIO_SECRET_KEY}"
-                : "${MINIO_BUCKET:?Missing MINIO_BUCKET}"
-
-                DEPLOY_IMAGE_PATH="${CNB_REPO_SLUG_LOWERCASE}"
-                if [ -n "${DEPLOY_IMAGE_NAME:-}" ]; then
-                  DEPLOY_IMAGE_PATH="${CNB_REPO_SLUG_LOWERCASE}/${DEPLOY_IMAGE_NAME}"
-                fi
-
-                IMAGE="${CNB_DOCKER_REGISTRY}/${DEPLOY_IMAGE_PATH}:latest"
-                CONTAINER_NAME="${APP_CONTAINER_NAME:-smart-data-insight-agent}"
-                APP_PORT="${APP_PORT:-8888}"
-                CONTAINER_PORT="${CONTAINER_PORT:-8888}"
-                SSH_PORT="${DEPLOY_PORT:-22}"
-                DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
-
-                mkdir -p ~/.ssh
-                printf "%s\n" "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
-                chmod 600 ~/.ssh/deploy_key
-
                 ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
-                  set -e
-                  ENV_FILE=/tmp/${CONTAINER_NAME}.env
-                  trap 'rm -f \${ENV_FILE}' EXIT
-                  cat > \${ENV_FILE} <<'EOF_ENV'
-                  DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-                  DB_URL=${DB_URL}
-                  DB_USERNAME=${DB_USERNAME}
-                  DB_PASSWORD=${DB_PASSWORD}
-                  REDIS_HOST=${REDIS_HOST}
-                  MAIL_USERNAME=${MAIL_USERNAME}
-                  MAIL_PASSWORD=${MAIL_PASSWORD}
-                  MINIO_ENDPOINT=${MINIO_ENDPOINT}
-                  MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-                  MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-                  MINIO_BUCKET=${MINIO_BUCKET}
-                  EOF_ENV
-                  chmod 600 \${ENV_FILE}
-                  docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
-                  for i in 1 2 3; do
-                    docker pull ${IMAGE} && break
-                    if [ \"\${i}\" = \"3\" ]; then
-                      echo 'docker pull failed after 3 attempts' >&2
-                      exit 1
-                    fi
-                    sleep 2
-                  done
-                  if docker ps -a --format '{{.Names}}' | grep -q '^'\"${CONTAINER_NAME}\"'$'; then
-                    docker rm -f ${CONTAINER_NAME}
-                  fi
-                  docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
-                    --network ${DOCKER_NETWORK} \
-                    -p ${APP_PORT}:${CONTAINER_PORT} \
-                    --env-file \${ENV_FILE} \
-                    ${IMAGE}
+                set -e
+                ENV_FILE=/tmp/${CONTAINER_NAME}.env
+                trap 'rm -f \$ENV_FILE' EXIT
+                # 无引号here-document：本地变量展开后写入远程ENV_FILE
+                cat > \$ENV_FILE <<EOF_ENV
+                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+                DB_URL=${DB_URL}
+                DB_USERNAME=${DB_USERNAME}
+                DB_PASSWORD=${DB_PASSWORD}
+                REDIS_HOST=${REDIS_HOST}
+                MAIL_USERNAME=${MAIL_USERNAME}
+                MAIL_PASSWORD=${MAIL_PASSWORD}
+                MINIO_ENDPOINT=${MINIO_ENDPOINT}
+                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+                MINIO_BUCKET=${MINIO_BUCKET}
+                EOF_ENV
+                chmod 600 \$ENV_FILE
+                # 确保网络存在
+                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
+                # 重试拉取镜像（最多3次）
+                for i in 1 2 3; do
+                docker pull ${IMAGE} && break
+                if [ \"\$i\" = \"3\" ]; then
+                echo 'docker pull failed after 3 attempts' >&2
+                exit 1
+                fi
+                sleep 2
+                done
+                # 停止并删除旧容器
+                if docker ps -a --format '{{.Names}}' | grep -q '^${CONTAINER_NAME}$'; then
+                docker rm -f ${CONTAINER_NAME}
+                fi
+                # 启动新容器
+                docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
+                --network ${DOCKER_NETWORK} \
+                -p ${APP_PORT}:${CONTAINER_PORT} \
+                --env-file \$ENV_FILE \
+                ${IMAGE}
                 "
