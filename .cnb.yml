@@ -1,9 +1,13 @@
-# Required CNB secrets:
-# DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_PRIVATE_KEY
-# Optional:
-# IMAGE_NAME (for custom image path: ${CNB_REPO_SLUG_LOWERCASE}/${IMAGE_NAME})
-# DEPLOY_IMAGE_NAME (custom image name for deploy pull target)
-# CONTAINER_PORT (container internal port, default 8888)
+# SmartDataInsightAgent CNB 流水线
+#
+# 通过远程文件导入环境变量：
+# https://cnb.cool/phj233/env/-/blob/main/sdia.yml
+# 必填部署变量：DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_PRIVATE_KEY
+# 必填应用变量：DEEPSEEK_API_KEY, DB_URL, DB_USERNAME, DB_PASSWORD, REDIS_HOST,
+#               MAIL_USERNAME, MAIL_PASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY,
+#               MINIO_SECRET_KEY, MINIO_BUCKET
+# 可选变量：IMAGE_NAME, DEPLOY_IMAGE_NAME, APP_CONTAINER_NAME, APP_PORT,
+#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK
 main:
   push:
     - name: docker-build-push-and-ssh-deploy
@@ -13,6 +17,8 @@ main:
         image: docker:27-git
       services:
         - docker
+      imports:
+        - https://cnb.cool/phj233/env/-/blob/main/sdia.yml
       stages:
         - name: build_and_push_image
           jobs:
@@ -23,6 +29,7 @@ main:
                 docker build -t "${SAME_IMAGE}" .
                 docker push "${SAME_IMAGE}"
 
+                # 可选：推送自定义子路径镜像
                 if [ -n "${IMAGE_NAME:-}" ]; then
                   CUSTOM_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/${IMAGE_NAME}:latest"
                   docker build -t "${CUSTOM_IMAGE}" .
@@ -37,16 +44,29 @@ main:
                 : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
                 : "${DEPLOY_USER:?Missing DEPLOY_USER}"
                 : "${DEPLOY_SSH_PRIVATE_KEY:?Missing DEPLOY_SSH_PRIVATE_KEY}"
+                : "${DEEPSEEK_API_KEY:?Missing DEEPSEEK_API_KEY}"
+                : "${DB_URL:?Missing DB_URL}"
+                : "${DB_USERNAME:?Missing DB_USERNAME}"
+                : "${DB_PASSWORD:?Missing DB_PASSWORD}"
+                : "${REDIS_HOST:?Missing REDIS_HOST}"
+                : "${MAIL_USERNAME:?Missing MAIL_USERNAME}"
+                : "${MAIL_PASSWORD:?Missing MAIL_PASSWORD}"
+                : "${MINIO_ENDPOINT:?Missing MINIO_ENDPOINT}"
+                : "${MINIO_ACCESS_KEY:?Missing MINIO_ACCESS_KEY}"
+                : "${MINIO_SECRET_KEY:?Missing MINIO_SECRET_KEY}"
+                : "${MINIO_BUCKET:?Missing MINIO_BUCKET}"
 
                 DEPLOY_IMAGE_PATH="${CNB_REPO_SLUG_LOWERCASE}"
                 if [ -n "${DEPLOY_IMAGE_NAME:-}" ]; then
                   DEPLOY_IMAGE_PATH="${CNB_REPO_SLUG_LOWERCASE}/${DEPLOY_IMAGE_NAME}"
                 fi
+
                 IMAGE="${CNB_DOCKER_REGISTRY}/${DEPLOY_IMAGE_PATH}:latest"
                 CONTAINER_NAME="${APP_CONTAINER_NAME:-smart-data-insight-agent}"
                 APP_PORT="${APP_PORT:-8888}"
                 CONTAINER_PORT="${CONTAINER_PORT:-8888}"
                 SSH_PORT="${DEPLOY_PORT:-22}"
+                DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
 
                 mkdir -p ~/.ssh
                 printf "%s\n" "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
@@ -54,9 +74,29 @@ main:
 
                 ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
                   set -e
+                  ENV_FILE=/tmp/${CONTAINER_NAME}.env
+                  trap 'rm -f \${ENV_FILE}' EXIT
+                  cat > \${ENV_FILE} <<'EOF_ENV'
+                  DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+                  DB_URL=${DB_URL}
+                  DB_USERNAME=${DB_USERNAME}
+                  DB_PASSWORD=${DB_PASSWORD}
+                  REDIS_HOST=${REDIS_HOST}
+                  MAIL_USERNAME=${MAIL_USERNAME}
+                  MAIL_PASSWORD=${MAIL_PASSWORD}
+                  MINIO_ENDPOINT=${MINIO_ENDPOINT}
+                  MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+                  MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+                  MINIO_BUCKET=${MINIO_BUCKET}
+                  EOF_ENV
+                  chmod 600 \${ENV_FILE}
                   docker pull ${IMAGE}
                   if docker ps -a --format '{{.Names}}' | grep -q '^'\"${CONTAINER_NAME}\"'$'; then
                     docker rm -f ${CONTAINER_NAME}
                   fi
-                  docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${APP_PORT}:${CONTAINER_PORT} ${IMAGE}
-              
+                  docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
+                    --network ${DOCKER_NETWORK} \
+                    -p ${APP_PORT}:${CONTAINER_PORT} \
+                    --env-file \${ENV_FILE} \
+                    ${IMAGE}
+                "
