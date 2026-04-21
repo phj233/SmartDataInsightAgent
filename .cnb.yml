@@ -7,8 +7,8 @@
 #               MAIL_USERNAME, MAIL_PASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY,
 #               MINIO_SECRET_KEY, MINIO_BUCKET
 # 可选变量：IMAGE_NAME, DEPLOY_IMAGE_NAME, APP_CONTAINER_NAME, APP_PORT,
-#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK
-main:
+#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK, IMAGE_TAG
+master:
   push:
     - name: docker-build-push-and-ssh-deploy
       runner:
@@ -25,15 +25,35 @@ main:
             - name: docker_build_push
               script: |
                 set -e
-                SAME_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
-                docker build -t "${SAME_IMAGE}" .
+                export DOCKER_BUILDKIT=1
+                REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+                IMAGE_TAG="${IMAGE_TAG:-latest}"
+                SAME_IMAGE="${REGISTRY_BASE}:${IMAGE_TAG}"
+                BUILD_IMAGE="${REGISTRY_BASE}:build-${CNB_BUILD_ID}"
+
+                # 复用远端 latest 作为缓存来源，不影响首次构建。
+                docker pull "${REGISTRY_BASE}:latest" >/dev/null 2>&1 || true
+                docker build --pull --cache-from "${REGISTRY_BASE}:latest" -t "${BUILD_IMAGE}" .
+                docker tag "${BUILD_IMAGE}" "${SAME_IMAGE}"
                 docker push "${SAME_IMAGE}"
+
+                # 主分支仍额外维护 latest 标签，兼容现有部署逻辑。
+                if [ "${IMAGE_TAG}" != "latest" ]; then
+                  docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
+                  docker push "${REGISTRY_BASE}:latest"
+                fi
 
                 # 可选：推送自定义子路径镜像
                 if [ -n "${IMAGE_NAME:-}" ]; then
-                  CUSTOM_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/${IMAGE_NAME}:latest"
-                  docker build -t "${CUSTOM_IMAGE}" .
+                  CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
+                  docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
                   docker push "${CUSTOM_IMAGE}"
+
+                  if [ "${IMAGE_TAG}" != "latest" ]; then
+                    CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
+                    docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
+                    docker push "${CUSTOM_LATEST_IMAGE}"
+                  fi
                 fi
 
         - name: deploy_to_remote
@@ -90,7 +110,15 @@ main:
                   MINIO_BUCKET=${MINIO_BUCKET}
                   EOF_ENV
                   chmod 600 \${ENV_FILE}
-                  docker pull ${IMAGE}
+                  docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
+                  for i in 1 2 3; do
+                    docker pull ${IMAGE} && break
+                    if [ \"\${i}\" = \"3\" ]; then
+                      echo 'docker pull failed after 3 attempts' >&2
+                      exit 1
+                    fi
+                    sleep 2
+                  done
                   if docker ps -a --format '{{.Names}}' | grep -q '^'\"${CONTAINER_NAME}\"'$'; then
                     docker rm -f ${CONTAINER_NAME}
                   fi
