@@ -25,7 +25,16 @@ master:
             - name: docker_build_push
               script: |
                 # 安装依赖：docker客户端（docker.io）+ git
-                apt-get update && apt-get install -y docker.io git
+                RUN apt-get remove -y docker-cli-plugins docker.io || true && \
+                apt-get autoremove -y && \
+                # 创建并授权cli-plugins目录（关键：确保可写）
+                mkdir -p /usr/libexec/docker/cli-plugins && \
+                chmod 755 /usr/libexec/docker/cli-plugins && \
+                # 更新缓存并安装docker.io
+                apt-get update && \
+                apt-get install -y --no-install-recommends docker.io && \
+                # 清理缓存减小镜像体积
+                rm -rf /var/lib/apt/lists/*
                 set -e
                 export DOCKER_BUILDKIT=1
                 REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
