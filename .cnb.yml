@@ -2,7 +2,8 @@
 #
 # 通过远程文件导入环境变量：
 # https://cnb.cool/phj233/env/-/blob/main/sdia.yml
-# 必填部署变量：DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_PRIVATE_KEY
+# 必填部署变量：DEPLOY_HOST, DEPLOY_USER
+# 认证变量（二选一）：DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD
 # 必填应用变量：DEEPSEEK_API_KEY, DB_URL, DB_USERNAME, DB_PASSWORD, REDIS_HOST,
 #               MAIL_USERNAME, MAIL_PASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY,
 #               MINIO_SECRET_KEY, MINIO_BUCKET
@@ -64,7 +65,10 @@ master:
                 set -e
                 : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
                 : "${DEPLOY_USER:?Missing DEPLOY_USER}"
-                : "${DEPLOY_SSH_PRIVATE_KEY:?Missing DEPLOY_SSH_PRIVATE_KEY}"
+                if [ -z "${DEPLOY_SSH_PRIVATE_KEY:-}" ] && [ -z "${DEPLOY_PASSWORD:-}" ]; then
+                  echo "Missing auth config: set DEPLOY_SSH_PRIVATE_KEY or DEPLOY_PASSWORD" >&2
+                  exit 1
+                fi
                 : "${DEEPSEEK_API_KEY:?Missing DEEPSEEK_API_KEY}"
                 : "${DB_URL:?Missing DB_URL}"
                 : "${DB_USERNAME:?Missing DB_USERNAME}"
@@ -89,11 +93,20 @@ master:
                 SSH_PORT="${DEPLOY_PORT:-22}"
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
 
-                mkdir -p ~/.ssh
-                printf "%s\n" "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
-                chmod 600 ~/.ssh/deploy_key
+                # 密码模式需要 sshpass，按镜像包管理器做最小安装。
+                if [ -n "${DEPLOY_PASSWORD:-}" ] && ! command -v sshpass >/dev/null 2>&1; then
+                  if command -v apk >/dev/null 2>&1; then
+                    apk add --no-cache sshpass >/dev/null
+                  elif command -v apt-get >/dev/null 2>&1; then
+                    apt-get update >/dev/null && apt-get install -y --no-install-recommends sshpass >/dev/null
+                  else
+                    echo "sshpass not found and no supported package manager available" >&2
+                    exit 1
+                  fi
+                fi
 
-                ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
+                if [ -n "${DEPLOY_PASSWORD:-}" ]; then
+                  sshpass -p "${DEPLOY_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
                 set -e
                 ENV_FILE=/tmp/${CONTAINER_NAME}.env
                 trap 'rm -f \$ENV_FILE' EXIT
@@ -134,3 +147,50 @@ master:
                 --env-file \$ENV_FILE \
                 ${IMAGE}
                 "
+                else
+                  mkdir -p ~/.ssh
+                  printf "%s\n" "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
+                  chmod 600 ~/.ssh/deploy_key
+
+                  ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
+                set -e
+                ENV_FILE=/tmp/${CONTAINER_NAME}.env
+                trap 'rm -f \$ENV_FILE' EXIT
+                # 无引号here-document：本地变量展开后写入远程ENV_FILE
+                cat > \$ENV_FILE <<EOF_ENV
+                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+                DB_URL=${DB_URL}
+                DB_USERNAME=${DB_USERNAME}
+                DB_PASSWORD=${DB_PASSWORD}
+                REDIS_HOST=${REDIS_HOST}
+                MAIL_USERNAME=${MAIL_USERNAME}
+                MAIL_PASSWORD=${MAIL_PASSWORD}
+                MINIO_ENDPOINT=${MINIO_ENDPOINT}
+                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+                MINIO_BUCKET=${MINIO_BUCKET}
+                EOF_ENV
+                chmod 600 \$ENV_FILE
+                # 确保网络存在
+                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
+                # 重试拉取镜像（最多3次）
+                for i in 1 2 3; do
+                docker pull ${IMAGE} && break
+                if [ \"\$i\" = \"3\" ]; then
+                echo 'docker pull failed after 3 attempts' >&2
+                exit 1
+                fi
+                sleep 2
+                done
+                # 停止并删除旧容器
+                if docker ps -a --format '{{.Names}}' | grep -q '^${CONTAINER_NAME}$'; then
+                docker rm -f ${CONTAINER_NAME}
+                fi
+                # 启动新容器
+                docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
+                --network ${DOCKER_NETWORK} \
+                -p ${APP_PORT}:${CONTAINER_PORT} \
+                --env-file \$ENV_FILE \
+                ${IMAGE}
+                "
+                fi
