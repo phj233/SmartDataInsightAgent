@@ -14,9 +14,9 @@ master:
       runner:
         cpus: 2
       docker:
-        image: ubuntu:24.04
+        image: docker:27-git
       services:
-        - docker  # 保持docker服务（默认用docker:dind提供daemon）
+        - docker
       imports:
         - https://cnb.cool/phj233/env/-/blob/main/sdia.yml
       stages:
@@ -24,14 +24,7 @@ master:
           jobs:
             - name: docker_build_push
               script: |
-                set -e  # 移至开头，全程错误终止
-                # 安装依赖：docker.io + git（直接安装，无需先移除）
-                apt-get update && \
-                apt-get install -y --no-install-recommends docker.io git && \
-                rm -rf /var/lib/apt/lists/* && \
-                # 创建并授权cli-plugins目录（确保可写）
-                mkdir -p /usr/libexec/docker/cli-plugins && \
-                chmod 755 /usr/libexec/docker/cli-plugins
+                set -e
                 
                 export DOCKER_BUILDKIT=1
                 REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
@@ -47,21 +40,21 @@ master:
                 
                 # 主分支维护latest标签
                 if [ "${IMAGE_TAG}" != "latest" ]; then
-                docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
-                docker push "${REGISTRY_BASE}:latest"
+                  docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
+                  docker push "${REGISTRY_BASE}:latest"
                 fi
                 
                 # 可选：推送自定义子路径镜像
                 if [ -n "${IMAGE_NAME:-}" ]; then
-                CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
-                docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
-                docker push "${CUSTOM_IMAGE}"
+                  CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
+                  docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
+                  docker push "${CUSTOM_IMAGE}"
               
-                if [ "${IMAGE_TAG}" != "latest" ]; then
-                CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
-                docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
-                docker push "${CUSTOM_LATEST_IMAGE}"
-                fi
+                  if [ "${IMAGE_TAG}" != "latest" ]; then
+                    CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
+                    docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
+                    docker push "${CUSTOM_LATEST_IMAGE}"
+                  fi
                 fi
 
         - name: deploy_to_remote
