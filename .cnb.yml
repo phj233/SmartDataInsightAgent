@@ -14,9 +14,9 @@ master:
       runner:
         cpus: 2
       docker:
-        image: docker:27-git
+        image: ubuntu:24.04
       services:
-        - docker
+        - docker  # 保持docker服务（默认用docker:dind提供daemon）
       imports:
         - https://cnb.cool/phj233/env/-/blob/main/sdia.yml
       stages:
@@ -24,6 +24,8 @@ master:
           jobs:
             - name: docker_build_push
               script: |
+                # 安装依赖：docker客户端（docker.io）+ git
+                apt-get update && apt-get install -y docker.io git
                 set -e
                 export DOCKER_BUILDKIT=1
                 REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
