@@ -59,7 +59,7 @@ main:
                     docker rm -f ${CONTAINER_NAME}
                   fi
                   docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${APP_PORT}:${CONTAINER_PORT} ${IMAGE}
-                "
+              
 
 "$":
   web_trigger:
@@ -116,6 +116,6 @@ main:
                     docker rm -f ${CONTAINER_NAME}
                   fi
                   docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${APP_PORT}:${CONTAINER_PORT} ${IMAGE}
-                "
+              
 
 
