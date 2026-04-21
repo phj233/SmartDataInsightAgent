@@ -14,7 +14,7 @@ master:
       runner:
         cpus: 2
       docker:
-        image: docker:27-git
+        image: docker:git
       services:
         - docker
       imports:
