@@ -8,7 +8,8 @@
 #               MAIL_USERNAME, MAIL_PASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY,
 #               MINIO_SECRET_KEY, MINIO_BUCKET
 # 可选变量：IMAGE_NAME, DEPLOY_IMAGE_NAME, APP_CONTAINER_NAME, APP_PORT,
-#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK, IMAGE_TAG
+#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK, IMAGE_TAG,
+#          DOCKER_STATIC_IP, DOCKER_NETWORK_SUBNET
 master:
   push:
     - name: docker-build-push-and-ssh-deploy
@@ -92,6 +93,8 @@ master:
                 CONTAINER_PORT="${CONTAINER_PORT:-8080}"
                 SSH_PORT="${DEPLOY_PORT:-22}"
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
+                DOCKER_STATIC_IP="${DOCKER_STATIC_IP:-172.18.0.5}"
+                DOCKER_NETWORK_SUBNET="${DOCKER_NETWORK_SUBNET:-172.18.0.0/16}"
 
                 REMOTE_DEPLOY_SCRIPT=$(cat <<EOF_REMOTE
                 set -e
@@ -112,8 +115,8 @@ master:
                 MINIO_BUCKET=${MINIO_BUCKET}
                 EOF_ENV
                 chmod 600 \$ENV_FILE
-                # 确保网络存在
-                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
+                # 确保网络存在（首次创建时带子网，便于固定 IP）
+                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create --subnet ${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}
                 # 重试拉取镜像（最多3次）
                 for i in 1 2 3; do
                 docker pull ${IMAGE} && break
@@ -128,6 +131,7 @@ master:
                 # 启动新容器
                 docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
                 --network ${DOCKER_NETWORK} \
+                --ip ${DOCKER_STATIC_IP} \
                 -p ${APP_PORT}:${CONTAINER_PORT} \
                 --env-file \$ENV_FILE \
                 ${IMAGE}
