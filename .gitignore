@@ -41,3 +41,6 @@ out/
 # local secrets
 src/main/resources/application-secrets.yml
 
+# skills
+.github/skills/
+
