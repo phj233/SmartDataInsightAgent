@@ -93,6 +93,47 @@ master:
                 SSH_PORT="${DEPLOY_PORT:-22}"
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
 
+                REMOTE_DEPLOY_SCRIPT=$(cat <<EOF_REMOTE
+                set -e
+                ENV_FILE=/tmp/${CONTAINER_NAME}.env
+                trap 'rm -f \$ENV_FILE' EXIT
+                # 无引号here-document：本地变量展开后写入远程ENV_FILE
+                cat > \$ENV_FILE <<EOF_ENV
+                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+                DB_URL=${DB_URL}
+                DB_USERNAME=${DB_USERNAME}
+                DB_PASSWORD=${DB_PASSWORD}
+                REDIS_HOST=${REDIS_HOST}
+                MAIL_USERNAME=${MAIL_USERNAME}
+                MAIL_PASSWORD=${MAIL_PASSWORD}
+                MINIO_ENDPOINT=${MINIO_ENDPOINT}
+                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+                MINIO_BUCKET=${MINIO_BUCKET}
+                EOF_ENV
+                chmod 600 \$ENV_FILE
+                # 确保网络存在
+                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
+                # 重试拉取镜像（最多3次）
+                for i in 1 2 3; do
+                docker pull ${IMAGE} && break
+                if [ "\$i" = "3" ]; then
+                echo 'docker pull failed after 3 attempts' >&2
+                exit 1
+                fi
+                sleep 2
+                done
+                # 每次运行都删除上次容器（不存在时忽略）
+                docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+                # 启动新容器
+                docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
+                --network ${DOCKER_NETWORK} \
+                -p ${APP_PORT}:${CONTAINER_PORT} \
+                --env-file \$ENV_FILE \
+                ${IMAGE}
+                EOF_REMOTE
+                )
+
                 # 密码模式需要 sshpass，按镜像包管理器做最小安装。
                 if [ -n "${DEPLOY_PASSWORD:-}" ] && ! command -v sshpass >/dev/null 2>&1; then
                   if command -v apk >/dev/null 2>&1; then
@@ -106,91 +147,11 @@ master:
                 fi
 
                 if [ -n "${DEPLOY_PASSWORD:-}" ]; then
-                  sshpass -p "${DEPLOY_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
-                set -e
-                ENV_FILE=/tmp/${CONTAINER_NAME}.env
-                trap 'rm -f \$ENV_FILE' EXIT
-                # 无引号here-document：本地变量展开后写入远程ENV_FILE
-                cat > \$ENV_FILE <<EOF_ENV
-                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-                DB_URL=${DB_URL}
-                DB_USERNAME=${DB_USERNAME}
-                DB_PASSWORD=${DB_PASSWORD}
-                REDIS_HOST=${REDIS_HOST}
-                MAIL_USERNAME=${MAIL_USERNAME}
-                MAIL_PASSWORD=${MAIL_PASSWORD}
-                MINIO_ENDPOINT=${MINIO_ENDPOINT}
-                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-                MINIO_BUCKET=${MINIO_BUCKET}
-                EOF_ENV
-                chmod 600 \$ENV_FILE
-                # 确保网络存在
-                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
-                # 重试拉取镜像（最多3次）
-                for i in 1 2 3; do
-                docker pull ${IMAGE} && break
-                if [ \"\$i\" = \"3\" ]; then
-                echo 'docker pull failed after 3 attempts' >&2
-                exit 1
-                fi
-                sleep 2
-                done
-                # 停止并删除旧容器
-                if docker ps -a --format '{{.Names}}' | grep -q '^${CONTAINER_NAME}$'; then
-                docker rm -f ${CONTAINER_NAME}
-                fi
-                # 启动新容器
-                docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
-                --network ${DOCKER_NETWORK} \
-                -p ${APP_PORT}:${CONTAINER_PORT} \
-                --env-file \$ENV_FILE \
-                ${IMAGE}
-                "
+                  sshpass -p "${DEPLOY_PASSWORD}" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "$REMOTE_DEPLOY_SCRIPT"
                 else
                   mkdir -p ~/.ssh
                   printf "%s\n" "${DEPLOY_SSH_PRIVATE_KEY}" > ~/.ssh/deploy_key
                   chmod 600 ~/.ssh/deploy_key
 
-                  ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "
-                set -e
-                ENV_FILE=/tmp/${CONTAINER_NAME}.env
-                trap 'rm -f \$ENV_FILE' EXIT
-                # 无引号here-document：本地变量展开后写入远程ENV_FILE
-                cat > \$ENV_FILE <<EOF_ENV
-                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-                DB_URL=${DB_URL}
-                DB_USERNAME=${DB_USERNAME}
-                DB_PASSWORD=${DB_PASSWORD}
-                REDIS_HOST=${REDIS_HOST}
-                MAIL_USERNAME=${MAIL_USERNAME}
-                MAIL_PASSWORD=${MAIL_PASSWORD}
-                MINIO_ENDPOINT=${MINIO_ENDPOINT}
-                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-                MINIO_BUCKET=${MINIO_BUCKET}
-                EOF_ENV
-                chmod 600 \$ENV_FILE
-                # 确保网络存在
-                docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create ${DOCKER_NETWORK}
-                # 重试拉取镜像（最多3次）
-                for i in 1 2 3; do
-                docker pull ${IMAGE} && break
-                if [ \"\$i\" = \"3\" ]; then
-                echo 'docker pull failed after 3 attempts' >&2
-                exit 1
-                fi
-                sleep 2
-                done
-                # 停止并删除旧容器
-                if docker ps -a --format '{{.Names}}' | grep -q '^${CONTAINER_NAME}$'; then
-                docker rm -f ${CONTAINER_NAME}
-                fi
-                # 启动新容器
-                docker run -d --name ${CONTAINER_NAME} --restart unless-stopped \
-                --network ${DOCKER_NETWORK} \
-                -p ${APP_PORT}:${CONTAINER_PORT} \
-                --env-file \$ENV_FILE \
-                ${IMAGE}
-                "
+                  ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "$REMOTE_DEPLOY_SCRIPT"
                 fi
