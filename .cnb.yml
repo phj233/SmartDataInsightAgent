@@ -89,7 +89,7 @@ master:
                 IMAGE="${CNB_DOCKER_REGISTRY}/${DEPLOY_IMAGE_PATH}:latest"
                 CONTAINER_NAME="${APP_CONTAINER_NAME:-smart-data-insight-agent}"
                 APP_PORT="${APP_PORT:-8888}"
-                CONTAINER_PORT="${CONTAINER_PORT:-8888}"
+                CONTAINER_PORT="${CONTAINER_PORT:-8080}"
                 SSH_PORT="${DEPLOY_PORT:-22}"
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
 
