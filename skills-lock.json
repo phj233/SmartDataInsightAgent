@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "cnb-api": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "defa1e7ec0e7c5bbf84577993c2feccf450bd885287d194b1bb6ed045f07b1f7"
+    },
+    "cnb-knowledge-base": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "bd54557ee088e4c9be9b800f203b03365a088f611094ae9e33b1a755f83c0f30"
+    },
+    "cnb-pipeline": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "191dec31d7ed3cf259179b42c9a5916145a3c742151ebd8ade81e1b3c0b36452"
+    },
+    "code-commit": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "9c81b6858bc9d6cca5ee88b36f788ad4eabcd775c2f30be3ea0f9feed9d93dc5"
+    },
+    "code-review": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "0a188654dd1119101197eb10f67cf0ba15ef5f2d8372a10c7a1011179c7c3653"
+    },
+    "npc-delegate": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "b182aeed3062040289ff02d8c7d3908409cc55d7c971d554cf8055658351fe01"
+    },
+    "npc-search": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "f6837f421ae087d084eddd5ebd0f97e121839fa7266228de3dd43aae7395d29b"
+    },
+    "pr-diff": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "27af48dc1652a243965d0c2161205eff878e53bf0750d22e64877906c8f7f540"
+    },
+    "pr-summary": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "8063c5861085c17bd1febaa176d04c576050443247702a0d1d85d8e50144a151"
+    },
+    "tapd-resource-fetcher": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "021a8f747a62dc7480311d3a28ba9d9e5c821494b3329c71b026aafeb8d8e7f5"
+    },
+    "text-path-converter": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "f4b970fc2176d84929f9df367f2507f887de624578a44dae269049465aa64de8"
+    },
+    "upload-attachment": {
+      "source": "cnb/skills/cnb-skill",
+      "sourceType": "git",
+      "computedHash": "d190dd13236f508e6647182b879ed3c5f46f953995fd116eeaaf4a7ea0a55bfb"
+    }
+  }
+}
