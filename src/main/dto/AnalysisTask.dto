@@ -4,6 +4,8 @@ import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
 import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
+import top.phj233.smartdatainsightagent.model.AnalysisResult
+import top.phj233.smartdatainsightagent.model.AnalysisTaskStageRecord
 
 input AnalysisTaskCreateInput {
     name
@@ -14,6 +16,18 @@ input AnalysisTaskRenameInput {
     @NotBlank(message = "name 不能为空")
     @Size(max = 20, message = "name 长度不能超过 20")
     name: String
+}
+
+input AdminFailedAnalysisTaskUpdateInput {
+    @Size(max = 20, message = "name 长度不能超过 20")
+    name: String?
+    originalQuery: String?
+    generatedSql: String?
+    parameters: List<AnalysisTaskStageRecord>?
+    status: AnalysisStatus?
+    result: List<AnalysisResult>?
+    executionTime: Long?
+    errorMessage: String?
 }
 
 // API 入参: 异步/同步分析执行请求
