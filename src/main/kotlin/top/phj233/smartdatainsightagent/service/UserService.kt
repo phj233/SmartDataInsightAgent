@@ -103,7 +103,7 @@ class UserService(
         }
         userRegisterDTO.copy(password = BCrypt.hashpw(userRegisterDTO.password)).let {
             userRepository.save(it.toEntity{
-                roles().addBy { id = 1 } // 默认分配普通用户角色
+                roles().addBy { id = 2 } // 默认分配普通用户角色
                 enabled = true
             }, SaveMode.INSERT_ONLY)
         }
