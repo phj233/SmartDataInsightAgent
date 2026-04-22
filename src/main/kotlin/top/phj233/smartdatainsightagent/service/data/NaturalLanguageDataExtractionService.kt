@@ -2,6 +2,7 @@ package top.phj233.smartdatainsightagent.service.data
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
 
@@ -17,6 +18,7 @@ class NaturalLanguageDataExtractionService(
     private val deepseekService: DeepseekService,
     private val objectMapper: ObjectMapper
 ) {
+    private val logger = LoggerFactory.getLogger(NaturalLanguageDataExtractionService::class.java)
 
     /**
      * 从自然语言文本中提取适合可视化的结构化数据。
@@ -66,7 +68,12 @@ class NaturalLanguageDataExtractionService(
             return emptyList()
         }
 
-        val root = objectMapper.readTree(cleaned)
+        val root = try {
+            objectMapper.readTree(cleaned)
+        } catch (ex: Exception) {
+            logger.warn("[自然语言提取] 模型返回内容不是合法 JSON，length={}, error={}", cleaned.length, ex.message)
+            throw IllegalArgumentException("自然语言数据提取失败，请简化输入后重试")
+        }
         val rowsNode = when {
             root.isArray -> root
             root.isObject && root.has("rows") -> root.get("rows")

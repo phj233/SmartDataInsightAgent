@@ -3,6 +3,7 @@ package top.phj233.smartdatainsightagent.service.data
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import top.phj233.smartdatainsightagent.service.ai.DeepseekService
@@ -55,6 +56,14 @@ class NaturalLanguageDataExtractionServiceTest {
     fun `return empty list when response has no rows`() {
         val rows = service.parseExtractionResponse("{\"rows\": []}")
         assertTrue(rows.isEmpty())
+    }
+
+    @Test
+    fun `throw user friendly message when response is invalid json`() {
+        val ex = assertThrows(IllegalArgumentException::class.java) {
+            service.parseExtractionResponse("{\"rows\":[{\"name\":\"A\"")
+        }
+        assertEquals("自然语言数据提取失败，请简化输入后重试", ex.message)
     }
 }
 
