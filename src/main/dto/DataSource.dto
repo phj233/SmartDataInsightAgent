@@ -15,6 +15,23 @@ input DataSourceUpdateInput {
     schemaInfo?
 }
 
+input AdminDataSourceCreateInput {
+    userId
+    name
+    type
+    connectionConfig
+    schemaInfo?
+}
+
+input AdminDataSourceUpdateInput {
+    id
+    userId
+    name
+    type
+    connectionConfig
+    schemaInfo?
+}
+
 DataSourceSummaryView {
     id
     name
