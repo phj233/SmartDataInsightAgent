@@ -42,7 +42,7 @@ class NaturalLanguageDataExtractionService(
             }
             
             要求：
-            1. 只返回 JSON，不要 Markdown。
+            1. 必须返回合法JSON，不要 Markdown。
             2. 数值字段保持数字类型。
             3. 如果文本中有时间、地区、产品等维度，请保留为字段。
             4. 如果能识别多个指标，可以保留多个数值字段。
