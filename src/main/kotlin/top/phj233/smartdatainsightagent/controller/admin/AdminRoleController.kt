@@ -11,6 +11,11 @@ import top.phj233.smartdatainsightagent.entity.dto.RoleCreate
 import top.phj233.smartdatainsightagent.entity.dto.RoleUpdate
 import top.phj233.smartdatainsightagent.service.admin.AdminRoleService
 
+/**
+ * 管理员角色控制器
+ * @author phj233
+ * @since 2026/4/22 19:12
+ */
 @RestController
 @Validated
 @SaCheckRole("admin")
@@ -55,14 +60,16 @@ class AdminRoleController(
 
     /**
      * 更新角色。
+     * @param id 角色ID
      * @param roleUpdate 更新输入参数
      * @return 更新后的角色详情
      */
     @PutMapping("/{id}")
     fun update(
+        @PathVariable id: Long,
         @RequestBody @Valid roleUpdate: RoleUpdate
     ): Role {
-        return adminRoleService.update(roleUpdate)
+        return adminRoleService.update(id, roleUpdate)
     }
 
     /**
@@ -74,4 +81,3 @@ class AdminRoleController(
         adminRoleService.delete(id)
     }
 }
-

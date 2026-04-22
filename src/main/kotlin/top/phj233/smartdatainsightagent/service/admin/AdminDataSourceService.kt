@@ -6,11 +6,7 @@ import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import top.phj233.smartdatainsightagent.entity.copy
-import top.phj233.smartdatainsightagent.entity.dto.AdminDataSourceCreateInput
-import top.phj233.smartdatainsightagent.entity.dto.AdminDataSourceUpdateInput
-import top.phj233.smartdatainsightagent.entity.dto.DataSourceCreateInput
-import top.phj233.smartdatainsightagent.entity.dto.DataSourceDetailView
-import top.phj233.smartdatainsightagent.entity.dto.DataSourceUpdateInput
+import top.phj233.smartdatainsightagent.entity.dto.*
 import top.phj233.smartdatainsightagent.exception.DataSourceException
 import top.phj233.smartdatainsightagent.exception.UserException
 import top.phj233.smartdatainsightagent.repository.DataSourceRepository
@@ -53,15 +49,11 @@ class AdminDataSourceService(
 
     fun update(id: Long, input: AdminDataSourceUpdateInput, refreshSchemaOnly: Boolean): DataSourceDetailView {
         logger.info(
-            "[管理员数据源服务] 更新数据源, dataSourceId={}, requestBodyId={}, targetUserId={}, refreshSchemaOnly={}",
+            "[管理员数据源服务] 更新数据源, dataSourceId={}, targetUserId={}, refreshSchemaOnly={}",
             id,
-            input.id,
             input.userId,
             refreshSchemaOnly
         )
-        if (input.id != null && input.id != id) {
-            throw DataSourceException.invalidConnectionConfig("路径id与请求体id不一致")
-        }
         ensureUserExists(input.userId)
 
         val existing = dataSourceRepository.findNullable(id)

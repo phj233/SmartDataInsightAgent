@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
+import top.phj233.smartdatainsightagent.entity.copy
 import top.phj233.smartdatainsightagent.entity.dto.AdminFailedAnalysisTaskUpdateInput
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskDetailView
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskSummaryView
@@ -12,9 +13,6 @@ import top.phj233.smartdatainsightagent.entity.enums.AnalysisStatus
 import top.phj233.smartdatainsightagent.exception.AnalysisTaskException
 import top.phj233.smartdatainsightagent.repository.AnalysisTaskRepository
 
-/**
- * 管理员分析任务服务
- */
 @Service
 class AdminAnalysisTaskService(
     private val analysisTaskRepository: AnalysisTaskRepository
@@ -39,7 +37,24 @@ class AdminAnalysisTaskService(
             ?: throw AnalysisTaskException.taskNotFound("分析任务不存在: $id")
 
         ensureFailed(existing.status, id)
-        val updated = analysisTaskRepository.save(input, SaveMode.UPDATE_ONLY)
+
+        val updated = analysisTaskRepository.save(
+            existing.copy {
+                input.name?.trim()?.let { name = it }
+                input.originalQuery?.trim()?.let { originalQuery = it }
+                if (input.generatedSql != null) {
+                    generatedSql = input.generatedSql.trim().ifBlank { null }
+                }
+                input.parameters?.let { parameters = it }
+                input.status?.let { status = it }
+                input.result?.let { result = it }
+                input.executionTime?.let { executionTime = it }
+                if (input.errorMessage != null) {
+                    errorMessage = input.errorMessage.trim().ifBlank { null }
+                }
+            },
+            SaveMode.UPDATE_ONLY
+        )
         return AnalysisTaskDetailView(updated)
     }
 

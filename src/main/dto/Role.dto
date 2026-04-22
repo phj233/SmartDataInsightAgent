@@ -6,7 +6,6 @@ input RoleCreate {
 }
 
 input RoleUpdate {
-    id
     name
 }
 

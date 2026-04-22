@@ -24,7 +24,6 @@ input AdminDataSourceCreateInput {
 }
 
 input AdminDataSourceUpdateInput {
-    id
     userId
     name
     type

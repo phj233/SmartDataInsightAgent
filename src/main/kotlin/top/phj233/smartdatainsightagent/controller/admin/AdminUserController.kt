@@ -10,6 +10,11 @@ import top.phj233.smartdatainsightagent.entity.dto.AdminUserUpdateInput
 import top.phj233.smartdatainsightagent.entity.dto.UserMeResponse
 import top.phj233.smartdatainsightagent.service.admin.AdminUserService
 
+/**
+ * 管理员用户控制器
+ * @author phj233
+ * @since 2026/4/22 19:14
+ */
 @RestController
 @SaCheckRole("admin")
 @RequestMapping("/api/admin/users")

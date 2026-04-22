@@ -31,27 +31,29 @@ class AdminRoleService(
 
     fun create(roleCreate: RoleCreate): Role {
         logger.info("[管理员角色服务] 创建角色, name={}", roleCreate.name)
-        return roleRepository.save(
-            roleCreate,
-            SaveMode.INSERT_ONLY
-        )
+        val normalizedName = roleCreate.name.trim()
+        roleRepository.findByName(normalizedName)?.let {
+            throw RoleException.roleAlreadyExists("角色名已存在: $normalizedName")
+        }
+        return roleRepository.save(roleCreate.copy(name = normalizedName), SaveMode.INSERT_ONLY)
     }
 
-    fun update(roleUpdate: RoleUpdate): Role {
-        logger.info("[管理员角色服务] 更新角色, roleId={}, name={}", roleUpdate.id, roleUpdate.name)
-        val existing = roleRepository.findNullable(roleUpdate.id)
-            ?: throw RoleException.roleNotFound("角色不存在: ${roleUpdate.id}")
+    fun update(id: Long, roleUpdate: RoleUpdate): Role {
+        logger.info("[管理员角色服务] 更新角色, roleId={}, name={}", id, roleUpdate.name)
+        val existing = roleRepository.findNullable(id)
+            ?: throw RoleException.roleNotFound("角色不存在: $id")
 
-        roleRepository.findByName(roleUpdate.name.trim())?.let { matched ->
-            if (matched.id != roleUpdate.id) {
-                logger.warn("[管理员角色服务] 角色名已存在, name={}, roleId={}", roleUpdate.name, matched.id)
-                throw RoleException.roleAlreadyExists("角色名已存在: ${roleUpdate.name}")
+        val normalizedName = roleUpdate.name.trim()
+        roleRepository.findByName(normalizedName)?.let { matched ->
+            if (matched.id != id) {
+                logger.warn("[管理员角色服务] 角色名已存在, name={}, roleId={}", normalizedName, matched.id)
+                throw RoleException.roleAlreadyExists("角色名已存在: $normalizedName")
             }
         }
 
         return roleRepository.save(
             existing.copy {
-                this.name = roleUpdate.name.trim()
+                this.name = normalizedName
             },
             SaveMode.UPDATE_ONLY
         )
