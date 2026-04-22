@@ -1,0 +1,12 @@
+export top.phj233.smartdatainsightagent.entity.Role
+ -> package top.phj233.smartdatainsightagent.entity.dto
+
+input RoleCreate {
+    name
+}
+
+input RoleUpdate {
+    id
+    name
+}
+
