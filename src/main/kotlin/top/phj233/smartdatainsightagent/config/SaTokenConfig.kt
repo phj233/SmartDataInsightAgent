@@ -100,7 +100,19 @@ class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
             loginId: $loginId - loginType: $loginType
             tokenInfo： ${StpUtil.getTokenInfo()}
             """.trimIndent())
-        userRepository.findUserRolesById(loginId as Long).flatMap {
+        val userId = when (loginId) {
+            is Long -> loginId
+            is Number -> loginId.toLong()
+            is String -> loginId.toLongOrNull()
+            else -> null
+        }
+
+        if (userId == null) {
+            logger.warn("无法解析登录ID为Long, loginId={}, loginType={}", loginId, loginType)
+            return emptyList()
+        }
+
+        userRepository.findUserRolesById(userId).flatMap {
             it.roles.map { role ->
                 role.name
             }
