@@ -41,7 +41,6 @@ class AnalysisTaskService(
 ) {
     private val logger = LoggerFactory.getLogger(AnalysisTaskService::class.java)
 
-
     /**
      * 创建新的分析任务，并初始化任务的基础状态与第一条阶段记录。
      *
@@ -54,7 +53,7 @@ class AnalysisTaskService(
         logger.info("[任务服务] 创建分析任务，userId={}, dataSourceId={}, queryLength={}", request.userId, request.dataSourceId, request.query.length)
         validateCreateRequest(request)
         val input = AnalysisTaskCreateInput(
-            name = request.query.take(20),
+            name = defaultTaskName(request.query),
             originalQuery = request.query
         )
         val created = analysisTaskRepository.save(
@@ -232,25 +231,41 @@ class AnalysisTaskService(
      */
     @Transactional
     fun reopenFailedTask(taskId: Long, userId: Long): AnalysisRequest {
+        return reopenFailedTask(taskId, userId, null)
+    }
+
+    /**
+     * 在失败任务上重新分析，允许用户修改 query 后沿用原任务重试。
+     *
+     * @param taskId 任务ID
+     * @param userId 当前用户ID
+     * @param overrideQuery 可选的新 query，传空时沿用原 query
+     * @return 重开的分析请求
+     */
+    @Transactional
+    fun reopenFailedTask(taskId: Long, userId: Long, overrideQuery: String?): AnalysisRequest {
         return withMdc("taskId" to taskId.toString(), "userId" to userId.toString()) {
             val existing = findOwnedTask(taskId, userId)
             if (existing.status != AnalysisStatus.FAILED) {
                 throw AnalysisTaskException.invalidTaskRequest("仅失败任务支持重新分析")
             }
 
-            val query = existing.originalQuery.trim()
-            if (query.isBlank()) {
-                throw AnalysisTaskException.invalidTaskRequest("原任务查询为空，无法重新分析")
-            }
-
+            val query = resolveRetryQuery(existing.originalQuery, overrideQuery)
             val request = AnalysisRequest(
                 query = query,
                 dataSourceId = extractDataSourceId(existing),
                 userId = userId
             )
+            val queryUpdated = query != existing.originalQuery
 
             val updated = existing.copy {
                 status = AnalysisStatus.PENDING
+                if (queryUpdated) {
+                    originalQuery = query
+                    if (shouldRefreshTaskName(existing)) {
+                        name = defaultTaskName(query)
+                    }
+                }
                 generatedSql = null
                 result = null
                 executionTime = null
@@ -258,10 +273,7 @@ class AnalysisTaskService(
                 parameters = appendStage(
                     existing.parameters,
                     STAGE_REANALYZE_REQUESTED,
-                    mapOf(
-                        "inputMode" to toJsonNode(if (request.dataSourceId != null) "DATA_SOURCE" else "RAW_TEXT"),
-                        "queryLength" to toJsonNode(request.query.length)
-                    )
+                    reanalyzeDetails(request, queryUpdated)
                 )
             }
             analysisTaskRepository.save(updated, SaveMode.UPDATE_ONLY)
@@ -273,7 +285,12 @@ class AnalysisTaskService(
                 details = updated.parameters.lastOrNull()?.details ?: emptyMap()
             )
 
-            logger.info("[任务服务] 失败任务已重开，taskId={}, dataSourceId={}", taskId, request.dataSourceId)
+            logger.info(
+                "[任务服务] 失败任务已重开，taskId={}, dataSourceId={}, queryUpdated={}",
+                taskId,
+                request.dataSourceId,
+                queryUpdated
+            )
             request
         }
     }
@@ -434,7 +451,6 @@ class AnalysisTaskService(
         }
     }
 
-
     /**
      * 校验任务状态流转是否合法。
      *
@@ -488,6 +504,24 @@ class AnalysisTaskService(
     }
 
     /**
+     * 构建重新分析阶段的详情信息。
+     *
+     * @param request 重开的分析请求
+     * @param queryUpdated 本次是否修改了 query
+     * @return 重试阶段的详情信息
+     */
+    private fun reanalyzeDetails(
+        request: AnalysisRequest,
+        queryUpdated: Boolean
+    ): Map<String, JsonNode> = buildMap {
+        put("query", toJsonNode(request.query))
+        put("queryLength", toJsonNode(request.query.length))
+        put("inputMode", toJsonNode(if (request.dataSourceId != null) "DATA_SOURCE" else "RAW_TEXT"))
+        put("queryUpdated", toJsonNode(queryUpdated))
+        request.dataSourceId?.let { put("dataSourceId", toJsonNode(it)) }
+    }
+
+    /**
      * 构建任务成功时的统计信息。
      *
      * @param result 分析结果
@@ -529,6 +563,23 @@ class AnalysisTaskService(
     }
 
     private fun nowTimestamp(): String = Instant.now().toString()
+
+    private fun resolveRetryQuery(originalQuery: String, overrideQuery: String?): String {
+        if (overrideQuery == null) {
+            return originalQuery.trim().takeIf { it.isNotBlank() }
+                ?: throw AnalysisTaskException.invalidTaskRequest("原任务查询为空，无法重新分析")
+        }
+
+        return overrideQuery.trim().takeIf { it.isNotBlank() }
+            ?: throw AnalysisTaskException.invalidTaskRequest("重试 query 不能为空")
+    }
+
+    private fun shouldRefreshTaskName(task: AnalysisTask): Boolean {
+        val currentName = task.name.trim()
+        return currentName.isBlank() || currentName == defaultTaskName(task.originalQuery.trim())
+    }
+
+    private fun defaultTaskName(query: String): String = query.take(20)
 
     private fun toJsonNode(value: Any?): JsonNode {
         return objectMapper.valueToTree(value)

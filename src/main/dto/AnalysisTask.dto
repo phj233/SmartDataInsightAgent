@@ -30,7 +30,6 @@ input AdminFailedAnalysisTaskUpdateInput {
     errorMessage
 }
 
-// API 入参: 异步/同步分析执行请求
 input AnalysisExecuteRequest {
     @NotBlank(message = "query 不能为空")
     query: String
@@ -38,7 +37,10 @@ input AnalysisExecuteRequest {
     dataSourceId: Long?
 }
 
-// API 出参: 异步创建任务后立即返回
+input AnalysisTaskReanalyzeInput {
+    query: String?
+}
+
 input AnalysisTaskCreateResponse {
     taskId: Long
     status
@@ -66,5 +68,3 @@ AnalysisTaskDetailView {
     executionTime
     errorMessage
 }
-
-

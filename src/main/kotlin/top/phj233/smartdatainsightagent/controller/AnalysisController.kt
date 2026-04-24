@@ -61,9 +61,12 @@ class AnalysisController(
      * @return 包含原任务ID和重试后状态的响应对象
      */
     @PostMapping("/tasks/{taskId}/reanalyze")
-    fun reanalyzeFailedTask(@PathVariable taskId: Long): AnalysisTaskCreateResponse {
+    fun reanalyzeFailedTask(
+        @PathVariable taskId: Long,
+        @RequestBody(required = false) input: AnalysisTaskReanalyzeInput? = null
+    ): AnalysisTaskCreateResponse {
         val currentUserId = StpUtil.getLoginIdAsLong()
-        val request = analysisTaskService.reopenFailedTask(taskId, currentUserId)
+        val request = analysisTaskService.reopenFailedTask(taskId, currentUserId, input?.query)
         analysisExecutionService.submit(taskId, request)
         return AnalysisTaskCreateResponse(taskId = taskId, status = AnalysisStatus.PENDING)
     }
