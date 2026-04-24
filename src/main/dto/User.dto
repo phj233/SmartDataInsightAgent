@@ -58,7 +58,9 @@ input AdminUserCreateInput {
     email
     avatar
     enabled
-    roleIds: List<Long>
+    roles {
+        id
+    }
 }
 
 input AdminUserUpdateInput {
@@ -70,5 +72,7 @@ input AdminUserUpdateInput {
     email?
     avatar
     enabled?
-    roleIds: List<Long>?
+    roles {
+        id
+    }
 }

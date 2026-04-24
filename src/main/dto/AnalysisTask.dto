@@ -15,19 +15,19 @@ input AnalysisTaskCreateInput {
 input AnalysisTaskRenameInput {
     @NotBlank(message = "name 不能为空")
     @Size(max = 20, message = "name 长度不能超过 20")
-    name: String
+    name
 }
 
 input AdminFailedAnalysisTaskUpdateInput {
     @Size(max = 20, message = "name 长度不能超过 20")
-    name: String?
-    originalQuery: String?
-    generatedSql: String?
-    parameters: List<AnalysisTaskStageRecord>?
-    status: AnalysisStatus?
-    result: List<AnalysisResult>?
-    executionTime: Long?
-    errorMessage: String?
+    name?
+    originalQuery?
+    generatedSql
+    parameters?
+    status?
+    result
+    executionTime
+    errorMessage
 }
 
 // API 入参: 异步/同步分析执行请求
