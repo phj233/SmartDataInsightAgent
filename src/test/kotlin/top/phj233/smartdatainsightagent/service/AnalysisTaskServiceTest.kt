@@ -1,9 +1,12 @@
 package top.phj233.smartdatainsightagent.service
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.mockito.Answers
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.mock
+import org.mockito.invocation.InvocationOnMock
 import top.phj233.smartdatainsightagent.entity.AnalysisTask
 import top.phj233.smartdatainsightagent.entity.AnalysisTaskDraft
 import top.phj233.smartdatainsightagent.entity.dto.AnalysisTaskDetailView
@@ -15,6 +18,8 @@ import top.phj233.smartdatainsightagent.model.AnalysisTaskStageRecord
 import top.phj233.smartdatainsightagent.repository.AnalysisTaskRepository
 
 class AnalysisTaskServiceTest {
+
+    private val objectMapper = jacksonObjectMapper()
 
     @Test
     fun `throw business exception when task query is blank`() {
@@ -121,8 +126,117 @@ class AnalysisTaskServiceTest {
         }
     }
 
+    @Test
+    fun `reopen failed task should reuse original query by default`() {
+        var savedTask: AnalysisTask? = null
+        val repository = repositoryWithSaveCapture { savedTask = it }
+        val service = AnalysisTaskService(repository)
+        doReturn(failedTask(id = 5L)).`when`(repository).findByIdAndUserId(5L, 7L)
+
+        val request = service.reopenFailedTask(5L, 7L, null)
+
+        assertEquals("show me sales", request.query)
+        assertEquals(9L, request.dataSourceId)
+        assertNotNull(savedTask)
+        assertEquals(AnalysisStatus.PENDING, savedTask!!.status)
+        assertEquals("show me sales", savedTask.originalQuery)
+        assertNull(savedTask.generatedSql)
+        assertNull(savedTask.result)
+        assertNull(savedTask.executionTime)
+        assertNull(savedTask.errorMessage)
+        assertEquals(AnalysisTaskService.STAGE_REANALYZE_REQUESTED, savedTask.parameters.last().stage)
+        assertFalse(savedTask.parameters.last().details.getValue("queryUpdated").asBoolean())
+    }
+
+    @Test
+    fun `reopen failed task should update query and task name when override query is provided`() {
+        var savedTask: AnalysisTask? = null
+        val repository = repositoryWithSaveCapture { savedTask = it }
+        val service = AnalysisTaskService(repository)
+        doReturn(failedTask(id = 6L)).`when`(repository).findByIdAndUserId(6L, 7L)
+
+        val request = service.reopenFailedTask(6L, 7L, "  show me revenue  ")
+
+        assertEquals("show me revenue", request.query)
+        assertNotNull(savedTask)
+        assertEquals("show me revenue", savedTask!!.originalQuery)
+        assertEquals("show me revenue", savedTask.name)
+        assertTrue(savedTask.parameters.last().details.getValue("queryUpdated").asBoolean())
+        assertEquals("show me revenue", savedTask.parameters.last().details.getValue("query").asText())
+    }
+
+    @Test
+    fun `reopen failed task should keep custom name when query changes`() {
+        var savedTask: AnalysisTask? = null
+        val repository = repositoryWithSaveCapture { savedTask = it }
+        val service = AnalysisTaskService(repository)
+        doReturn(failedTask(id = 7L, name = "custom task")).`when`(repository).findByIdAndUserId(7L, 7L)
+
+        service.reopenFailedTask(7L, 7L, "show me profit")
+
+        assertNotNull(savedTask)
+        assertEquals("custom task", savedTask!!.name)
+        assertEquals("show me profit", savedTask.originalQuery)
+    }
+
+    @Test
+    fun `reopen failed task should reject blank override query`() {
+        val repository = repositoryWithSaveCapture()
+        val service = AnalysisTaskService(repository)
+        doReturn(failedTask(id = 8L)).`when`(repository).findByIdAndUserId(8L, 7L)
+
+        assertThrows(AnalysisTaskException::class.java) {
+            service.reopenFailedTask(8L, 7L, "   ")
+        }
+    }
+
     private fun newService(): AnalysisTaskService {
         return AnalysisTaskService(mock(AnalysisTaskRepository::class.java))
+    }
+
+    private fun repositoryWithSaveCapture(onSave: (AnalysisTask) -> Unit = {}): AnalysisTaskRepository {
+        return mock(AnalysisTaskRepository::class.java) { invocation: InvocationOnMock ->
+            when (invocation.method.name) {
+                "save" -> (invocation.arguments[0] as AnalysisTask).also(onSave)
+                else -> Answers.RETURNS_DEFAULTS.answer(invocation)
+            }
+        }
+    }
+
+    private fun failedTask(
+        id: Long,
+        userId: Long = 7L,
+        originalQuery: String = "show me sales",
+        name: String = originalQuery.take(20),
+        dataSourceId: Long = 9L
+    ): AnalysisTask {
+        return AnalysisTaskDraft.`$`.produce {
+            this.id = id
+            user {
+                this.id = userId
+            }
+            this.name = name
+            this.originalQuery = originalQuery
+            generatedSql = "select * from orders"
+            parameters = listOf(
+                AnalysisTaskStageRecord(
+                    stage = AnalysisTaskService.STAGE_TASK_CREATED,
+                    timestamp = "2026-03-11T20:00:00",
+                    details = mapOf(
+                        "query" to objectMapper.valueToTree(originalQuery),
+                        "dataSourceId" to objectMapper.valueToTree(dataSourceId)
+                    )
+                )
+            )
+            status = AnalysisStatus.FAILED
+            result = emptyList()
+            executionTime = 120L
+            errorMessage = "boom"
+            createdTimeStamp = 1L
+            modifiedTimeStamp = 2L
+            createdBy = null
+            modifiedBy = null
+        }
     }
 
     private fun finishedTask(): AnalysisTask {
@@ -139,8 +253,10 @@ class AnalysisTaskServiceTest {
             result = null
             executionTime = null
             errorMessage = null
+            createdTimeStamp = 1L
+            modifiedTimeStamp = 2L
+            createdBy = null
+            modifiedBy = null
         }
     }
 }
-
-
