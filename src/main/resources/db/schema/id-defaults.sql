@@ -30,3 +30,13 @@ SELECT setval(
     (SELECT MAX(id) IS NOT NULL FROM public.analysis_tasks)
 );
 
+-- 清理历史重复关系，并确保用户-角色关系唯一。
+DELETE FROM public.user_role_mapping a
+USING public.user_role_mapping b
+WHERE a.ctid < b.ctid
+  AND a.user_id = b.user_id
+  AND a.role_id = b.role_id;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_user_role_mapping_user_role
+    ON public.user_role_mapping (user_id, role_id);
+
