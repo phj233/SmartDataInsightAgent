@@ -34,6 +34,8 @@ UserMeResponse {
     username
     email
     avatar
+    createdTimeStamp
+    modifiedTimeStamp
     enabled
     roles: List<String>
 }

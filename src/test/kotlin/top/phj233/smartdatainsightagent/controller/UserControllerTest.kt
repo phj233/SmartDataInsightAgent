@@ -28,6 +28,8 @@ class UserControllerTest {
             username = "new_name",
             email = "user@example.com",
             avatar = null,
+            createdTimeStamp = 1L,
+            modifiedTimeStamp = 2L,
             enabled = true,
             roles = listOf("USER")
         )

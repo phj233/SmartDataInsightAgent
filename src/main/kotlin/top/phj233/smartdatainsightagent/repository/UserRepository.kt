@@ -39,6 +39,8 @@ interface UserRepository : KRepository<User, Long> {
                 username()
                 email()
                 avatar()
+                createdTimeStamp()
+                modifiedTimeStamp()
                 enabled()
                 roles {
                     name()

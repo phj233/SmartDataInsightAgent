@@ -37,14 +37,7 @@ class UserService(
         logger.info("[用户服务] 获取当前用户信息，userId={}", loginId)
         val user = userRepository.findMeById(loginId)
             ?: throw UserException.userNotFound("用户不存在")
-        return UserMeResponse(
-            id = user.id,
-            username = user.username,
-            email = user.email,
-            avatar = user.avatar,
-            enabled = user.enabled,
-            roles = user.roles.map { it.name }
-        )
+        return UserMeResponse(user, user.roles.map { it.name })
     }
 
     /**
