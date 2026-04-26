@@ -32,6 +32,7 @@ spring:
         connect-timeout: 3000
         timeout: 3000
         host: ${REDIS_HOST}
+        password: ${REDIS_PASSWORD}
         lettuce:
           pool:
             # 连接池最大连接数
@@ -42,6 +43,7 @@ spring:
             max-idle: 20
             # 连接池中的最小空闲连接
             min-idle: 0
+
   main:
     allow-bean-definition-overriding: true
   mail:

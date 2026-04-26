@@ -56,7 +56,6 @@ dependencies {
     implementation("cn.dev33:sa-token-spring-boot3-starter:1.44.0")
     implementation("cn.dev33:sa-token-redis-template:1.44.0")
     implementation("org.apache.commons:commons-pool2")
-    implementation("cn.dev33:sa-token-jwt:1.44.0")
     implementation ("cn.hutool:hutool-all:5.8.40")
 }
 
