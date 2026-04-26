@@ -1,15 +1,11 @@
 # SmartDataInsightAgent CNB 流水线
 #
-# 通过远程文件导入环境变量：
+# 通过 CNB 密钥仓库导入运行时变量：
 # https://cnb.cool/phj233/env/-/blob/main/sdia.yml
 # 必填部署变量：DEPLOY_HOST, DEPLOY_USER
-# 认证变量（二选一）：DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD
-# 必填应用变量：DEEPSEEK_API_KEY, DB_URL, DB_USERNAME, DB_PASSWORD, REDIS_HOST,
-#               MAIL_USERNAME, MAIL_PASSWORD, MINIO_ENDPOINT, MINIO_ACCESS_KEY,
-#               MINIO_SECRET_KEY, MINIO_BUCKET
-# 可选变量：IMAGE_NAME, DEPLOY_IMAGE_NAME, APP_CONTAINER_NAME, APP_PORT,
-#          CONTAINER_PORT, DEPLOY_PORT, DOCKER_NETWORK, IMAGE_TAG,
-#          DOCKER_STATIC_IP, DOCKER_NETWORK_SUBNET
+# 认证变量：DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD
+# 运行时变量值来自 CNB imports。
+# 本地 sdia.yml 仅作为变量名清单，用于生成容器 env 文件。
 master:
   push:
     - name: docker-build-push-and-ssh-deploy
@@ -27,31 +23,31 @@ master:
             - name: docker_build_push
               script: |
                 set -e
-                
+
                 export DOCKER_BUILDKIT=1
                 REGISTRY_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
                 IMAGE_TAG="${IMAGE_TAG:-latest}"
                 SAME_IMAGE="${REGISTRY_BASE}:${IMAGE_TAG}"
                 BUILD_IMAGE="${REGISTRY_BASE}:build-${CNB_BUILD_ID}"
-                
-                # 复用远端latest缓存（首次构建忽略失败）
+
+                # 尽量复用远端 latest 镜像层缓存。
                 docker pull "${REGISTRY_BASE}:latest" >/dev/null 2>&1 || true
                 docker build --pull --cache-from "${REGISTRY_BASE}:latest" -t "${BUILD_IMAGE}" .
                 docker tag "${BUILD_IMAGE}" "${SAME_IMAGE}"
                 docker push "${SAME_IMAGE}"
-                
-                # 主分支维护latest标签
+
+                # 即使使用自定义标签，也保持 latest 标签可用。
                 if [ "${IMAGE_TAG}" != "latest" ]; then
                   docker tag "${BUILD_IMAGE}" "${REGISTRY_BASE}:latest"
                   docker push "${REGISTRY_BASE}:latest"
                 fi
-                
-                # 可选：推送自定义子路径镜像
+
+                # 可选：将同一镜像推送到自定义子路径。
                 if [ -n "${IMAGE_NAME:-}" ]; then
                   CUSTOM_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:${IMAGE_TAG}"
                   docker tag "${BUILD_IMAGE}" "${CUSTOM_IMAGE}"
                   docker push "${CUSTOM_IMAGE}"
-              
+
                   if [ "${IMAGE_TAG}" != "latest" ]; then
                     CUSTOM_LATEST_IMAGE="${REGISTRY_BASE}/${IMAGE_NAME}:latest"
                     docker tag "${BUILD_IMAGE}" "${CUSTOM_LATEST_IMAGE}"
@@ -67,20 +63,13 @@ master:
                 : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
                 : "${DEPLOY_USER:?Missing DEPLOY_USER}"
                 if [ -z "${DEPLOY_SSH_PRIVATE_KEY:-}" ] && [ -z "${DEPLOY_PASSWORD:-}" ]; then
-                  echo "Missing auth config: set DEPLOY_SSH_PRIVATE_KEY or DEPLOY_PASSWORD" >&2
+                  echo "缺少认证配置：请设置 DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD" >&2
                   exit 1
                 fi
-                : "${DEEPSEEK_API_KEY:?Missing DEEPSEEK_API_KEY}"
-                : "${DB_URL:?Missing DB_URL}"
-                : "${DB_USERNAME:?Missing DB_USERNAME}"
-                : "${DB_PASSWORD:?Missing DB_PASSWORD}"
-                : "${REDIS_HOST:?Missing REDIS_HOST}"
-                : "${MAIL_USERNAME:?Missing MAIL_USERNAME}"
-                : "${MAIL_PASSWORD:?Missing MAIL_PASSWORD}"
-                : "${MINIO_ENDPOINT:?Missing MINIO_ENDPOINT}"
-                : "${MINIO_ACCESS_KEY:?Missing MINIO_ACCESS_KEY}"
-                : "${MINIO_SECRET_KEY:?Missing MINIO_SECRET_KEY}"
-                : "${MINIO_BUCKET:?Missing MINIO_BUCKET}"
+                if [ ! -f sdia.yml ]; then
+                  echo "缺少本地 sdia.yml 变量名清单文件" >&2
+                  exit 1
+                fi
 
                 DEPLOY_IMAGE_PATH="${CNB_REPO_SLUG_LOWERCASE}"
                 if [ -n "${DEPLOY_IMAGE_NAME:-}" ]; then
@@ -95,33 +84,44 @@ master:
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
                 DOCKER_STATIC_IP="${DOCKER_STATIC_IP:-172.18.0.5}"
                 DOCKER_NETWORK_SUBNET="${DOCKER_NETWORK_SUBNET:-172.18.0.0/16}"
+                APP_ENV_CONTENT="$(
+                  awk '
+                    /^[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*/ {
+                      sub(/:.*/, "", $0)
+                      print $0
+                    }
+                  ' sdia.yml | while IFS= read -r VAR_NAME; do
+                    case "${VAR_NAME}" in
+                      DEPLOY_HOST|DEPLOY_USER|DEPLOY_SSH_PRIVATE_KEY|DEPLOY_PASSWORD|DEPLOY_PORT|DOCKER_NETWORK|DOCKER_STATIC_IP|DOCKER_NETWORK_SUBNET|APP_CONTAINER_NAME|APP_PORT|CONTAINER_PORT|IMAGE_NAME|DEPLOY_IMAGE_NAME|IMAGE_TAG)
+                        continue
+                        ;;
+                    esac
+
+                    eval "VAR_IS_SET=\${${VAR_NAME}+x}"
+                    if [ -z "${VAR_IS_SET}" ]; then
+                      echo "缺少应用环境变量：${VAR_NAME}" >&2
+                      exit 1
+                    fi
+
+                    eval "VAR_VALUE=\${${VAR_NAME}}"
+                    printf '%s=%s\n' "${VAR_NAME}" "${VAR_VALUE}"
+                  done
+                )" || exit 1
+                APP_ENV_B64="$(printf '%s' "${APP_ENV_CONTENT}" | base64 | tr -d '\n')"
 
                 REMOTE_DEPLOY_SCRIPT=$(cat <<EOF_REMOTE
                 set -e
                 ENV_FILE=/tmp/${CONTAINER_NAME}.env
                 trap 'rm -f \$ENV_FILE' EXIT
-                # 无引号here-document：本地变量展开后写入远程ENV_FILE
-                cat > \$ENV_FILE <<EOF_ENV
-                DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-                DB_URL=${DB_URL}
-                DB_USERNAME=${DB_USERNAME}
-                DB_PASSWORD=${DB_PASSWORD}
-                REDIS_HOST=${REDIS_HOST}
-                MAIL_USERNAME=${MAIL_USERNAME}
-                MAIL_PASSWORD=${MAIL_PASSWORD}
-                MINIO_ENDPOINT=${MINIO_ENDPOINT}
-                MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-                MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
-                MINIO_BUCKET=${MINIO_BUCKET}
-                EOF_ENV
+                if ! printf '%s' '${APP_ENV_B64}' | base64 -d > \$ENV_FILE 2>/dev/null; then
+                  printf '%s' '${APP_ENV_B64}' | base64 --decode > \$ENV_FILE
+                fi
                 chmod 600 \$ENV_FILE
-                # 确保网络存在（首次创建时带子网，便于固定 IP）
                 docker network inspect ${DOCKER_NETWORK} >/dev/null 2>&1 || docker network create --subnet ${DOCKER_NETWORK_SUBNET} ${DOCKER_NETWORK}
-                # 重试拉取镜像（最多3次）
                 for i in 1 2 3; do
                 docker pull ${IMAGE} && break
                 if [ "\$i" = "3" ]; then
-                echo 'docker pull failed after 3 attempts' >&2
+                echo 'docker pull 连续 3 次失败' >&2
                 exit 1
                 fi
                 sleep 2
@@ -145,7 +145,7 @@ master:
                   elif command -v apt-get >/dev/null 2>&1; then
                     apt-get update >/dev/null && apt-get install -y --no-install-recommends sshpass >/dev/null
                   else
-                    echo "sshpass not found and no supported package manager available" >&2
+                    echo "未找到 sshpass，且当前环境没有可用的包管理器可安装" >&2
                     exit 1
                   fi
                 fi
