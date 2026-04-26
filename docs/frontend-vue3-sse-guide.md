@@ -1,245 +1,303 @@
-# SmartDataInsightAgent 前端 AI 开发指南（Jimmer TS 优先）
+# SmartDataInsightAgent 前端接入指南
 
-> 面向 Vue3 + Pinia + Naive UI + Tailwind + Vue Router + ECharts。
+> 面向 `Vue 3 + Pinia + Vue Router + Naive UI + Tailwind + ECharts`。
 >
-> 本文是“前端实现指南”，不是接口文档。接口参数/响应细节以 Apifox 为准。
+> 本文聚焦“前端如何接入当前后端实现”，接口字段最终以 `/openapi.yml` 或 Jimmer TS 生成产物为准。
 
-## 1. 开发原则（给前端 AI）
+## 1. 接入原则
 
-- 优先使用 Jimmer 生成的 TypeScript 代码（`src/api/` 目录），不要手写重复 DTO 类型。
-- `services/*Controller.ts` 负责发请求；业务层只做组合，不直接拼 URL。
-- SSE 是任务进度“实时通道”；任务详情接口是“最终一致来源”。
-- 遇到字段不确定时，先从 `model/static/*` 与 `model/enums/*` 取类型，再补 UI 逻辑。
-
----
-
-## 2. Jimmer TS 产物使用约定
-
-当前你已有生成产物（示例）：
-
-- `Api.ts`
-- `Executor.ts`
-- `ApiErrors.ts`
-- `services/AnalysisController.ts`、`services/UserController.ts`、`services/DataSourceController.ts`
-- `model/static/*`（如 `AnalysisTaskCreateResponse.ts`、`AnalysisTaskDetailView.ts`、`UserMeResponse.ts`）
-- `model/enums/*`（如 `AnalysisStatus.ts`）
-
-推荐约定：
-
-- **请求调用**：统一通过 `services/*`。
-- **类型声明**：统一引用 `model/static/*` 和 `model/enums/*`。
-- **错误处理**：统一在 `Executor` 或上层适配器做拦截，页面不散落 try/catch 细节。
+- 优先使用 Jimmer 生成的 TypeScript 代码，不要手写重复 DTO。
+- `services/*Controller.ts` 负责发请求，store 负责业务编排，页面只做展示和交互。
+- 任务进度以 SSE 驱动，任务详情接口负责最终一致。
+- `/api/analysis/tasks` 是正式分析入口；`/api/analysis/execute` 只适合即时预览。
+- 管理端接口与用户端接口分开组织，避免路由、鉴权和菜单逻辑耦合。
 
 ---
 
-## 3. 目录约定（不做分层）
-
-建议结构：
+## 2. 推荐目录
 
 ```text
 src/
-  api/                   # Jimmer 生成代码（Api.ts / services / model）
+  api/                         # Jimmer 生成代码
   stores/
     auth.ts
     analysis.ts
     data-source.ts
+    admin-dashboard.ts
   views/
     login/
     analysis/
     data-sources/
+    admin/
+      dashboard/
+      users/
+      roles/
+      data-sources/
+      analysis-tasks/
   components/
     analysis/
       TaskTimeline.vue
       TaskResultCharts.vue
       SseStatusBadge.vue
+    admin/
+      DashboardCards.vue
+      DashboardTrendChart.vue
   utils/
     sse.ts
 ```
 
-说明：
+---
 
-- 生成代码统一放 `src/api/`，由 store 直接调用 `services/*`。
-- 不额外引入 adapter 分层，减少文件跳转成本。
-- store 里保留最少业务编排逻辑，页面只做展示和交互。
+## 3. Jimmer TS 使用约定
+
+当前后端已经暴露：
+
+- `services/AnalysisController.ts`
+- `services/UserController.ts`
+- `services/DataSourceController.ts`
+- `services/AdminAnalysisTaskController.ts`
+- `services/AdminDataSourceController.ts`
+- `services/AdminRoleController.ts`
+- `services/AdminUserController.ts`
+- `services/AdminVisualizationController.ts`
+- `model/static/*`
+- `model/enums/*`
+
+推荐做法：
+
+- 请求统一走 `services/*`
+- 类型统一引用 `model/static/*` 和 `model/enums/*`
+- 通用错误拦截统一放在 `Executor` 或请求封装层
+- 页面不要自行拼 URL 或复制后端枚举值
 
 ---
 
-## 4. 鉴权与会话（Sa-Token）
+## 4. 鉴权与会话
 
-已实现的关键能力：
+### 基本规则
 
-- `me`（当前登录用户）
-- `updateMe`（`PATCH /api/user/me`）
-- `logout`
-- `avatar` 上传（`multipart/form-data`）
+- `/api/**` 默认要求登录。
+- 白名单只有登录、注册、验证码发送、验证码登录、OpenAPI、`/ts.zip`。
+- 管理端接口全部要求 `admin` 角色。
 
-落地要求：
+### 落地建议
 
-- 前端请求默认携带凭据（按你的部署形态配置）。
-- 应用启动先 `bootstrap`：调用 `me` 判断会话。
-- 受保护接口出现未登录时：清空本地用户态并跳转 `/login`。
+- 应用启动先执行 `authStore.bootstrap()`，调用 `GET /api/user/me` 恢复会话。
+- 受保护接口返回 `401` 时，统一清理本地用户态并跳转 `/login`。
+- 管理端路由除了登录校验，还要基于 `roles` 判断是否包含 `admin`。
 
-`updateMe` 对接提醒（按当前后端实现）：
+### 用户资料相关注意点
 
-- 入参 DTO 已包含可选字段：`username`、`password`、`email`、`avatar`、`code`。
-- 若改邮箱，前端仍应先走 `sendCode` 获取验证码并提交 `code`。
-- 头像上传主流程仍建议使用 `POST /api/user/avatar`（文件上传）；不要仅依赖 `updateMe` 处理文件。
-- 当前后端实现优先保证密码更新链路，前端做资料编辑页时建议将“改密”与“头像上传”独立交互处理，避免用户感知不一致。
-
----
-
-## 5. 分析任务主流程（异步 + SSE）
-
-推荐标准流程：
-
-1. 调用“创建任务”接口，拿到 `taskId`（和初始状态）。
-2. 任务创建时后端会自动生成 `name`（`originalQuery` 前 20 字符）。
-3. 立即订阅 `/api/analysis/tasks/{taskId}/events`。
-4. 收到 `task-progress` 就更新任务状态和时间线。
-5. 同步启动详情轮询兜底（低频）。
-6. 到达 `SUCCESS`/`FAILED` 后：拉一次详情并停止全部跟踪。
-
-失败任务重分析（原地，不新建任务）：
-
-1. 当任务 `status=FAILED` 时，展示“重新分析”按钮。
-2. 点击后调用 `POST /api/analysis/tasks/{taskId}/reanalyze`。
-3. 后端会复用同一个 `taskId`，状态重置为 `PENDING`，并追加阶段 `REANALYZE_REQUESTED`。
-4. 前端继续订阅原 `taskId` 的 SSE（可重连或复用追踪逻辑），按新一轮 `task-progress` 刷新。
-5. 重分析结束后同样按 `SUCCESS`/`FAILED` 收敛并拉取一次详情。
-
-后端事件：
-
-- `connected`：连接握手成功
-- `task-progress`：任务进度变更
-- `onSuccess`：任务成功事件（在 `status=SUCCESS` 时额外推送）
-
-注意：后端在终态会关闭 SSE，因此前端需要把“正常关闭”当成可能的完成信号之一。
-
-终态建议判定顺序：
-
-1. 收到 `task-progress` 且 `status=FAILED` -> 直接失败收敛。
-2. 收到 `onSuccess` -> 按成功收敛（再拉一次详情做最终一致）。
-3. 连接关闭但未拿到明确终态 -> 立即补拉 `GET /api/analysis/tasks/{taskId}` 判定。
-
-补充：重分析是同 `taskId` 的新生命周期，前端不要新建本地任务项，应清空该任务旧的结果展示（SQL/图表/洞察）并等待新进度覆盖。
+- `PATCH /api/user/me` 的 DTO 包含 `username`、`password`、`email`、`avatar`、`code`。
+- 但服务层当前只实际处理密码更新；前端不要假设昵称、邮箱、头像能通过这个接口成功落库。
+- 头像上传必须走 `POST /api/user/avatar`，字段名固定为 `file`。
+- 头像上传限制 5 MB，仅支持 `jpg/jpeg/png/webp/gif`。
+- 验证码默认有效期 5 分钟，改邮箱能力当前后端未真正实现，页面可以先不开放。
 
 ---
 
-## 6. SSE 实现建议（与 Jimmer 并行）
+## 5. 分析任务接入
 
-Jimmer 生成客户端主要用于 HTTP API；SSE 建议独立工具实现：
+### 推荐主流程
 
-- 同域简单场景：原生 `EventSource`
-- 跨域/凭据复杂场景：`@microsoft/fetch-event-source`
+1. 调用 `POST /api/analysis/tasks`
+2. 立即拿到 `taskId` 与初始 `status`
+3. 订阅 `GET /api/analysis/tasks/{taskId}/events`
+4. 收到 `task-progress` 就更新状态、时间线、SQL、错误信息
+5. 低频轮询 `GET /api/analysis/tasks/{taskId}` 兜底
+6. 到达 `SUCCESS` / `FAILED` 后补拉详情并停止追踪
 
-`utils/sse.ts` 只做三件事：
+### SSE 事件语义
 
-- `connectTaskEvents(taskId, handlers)`
-- 自动重连（指数退避）
-- `close()` 释放资源
+服务端会发送：
 
-Store 侧只关心订阅结果，不关心底层 SSE 细节。
+- `connected`：握手成功
+- `task-progress`：阶段或状态更新
+- `onSuccess`：成功补充事件
 
-SSE 错误事件（认证失效）补充：
+当前实现特征：
 
-- 未登录访问 `/events` 时，后端返回 `event: error`。
-- `data` 结构包含：`code`（`AUTH_NOT_LOGIN`）、`message`、`timestamp`（数字毫秒时间戳）。
-- 前端应在该事件里统一执行“清会话 + 跳登录”。
+- 订阅建立后会先推送一次任务快照
+- 终态任务的晚到订阅者会收到快照后立刻关闭连接
+- 任务进入终态后服务端会主动关闭连接
+- 未登录访问 SSE 时会收到 `event: error`，`code=AUTH_NOT_LOGIN`
+
+建议的终态判定顺序：
+
+1. 收到 `task-progress` 且 `status=FAILED`
+2. 收到 `onSuccess`
+3. 连接关闭但没拿到明确终态时，立即补拉一次详情
+
+### 同步执行接口的定位
+
+`POST /api/analysis/execute`：
+
+- 立即返回 `AnalysisResult`
+- 内部也会创建并执行任务
+- 但响应里没有 `taskId`
+
+结论：
+
+- 要做正式任务列表、SSE 追踪、失败重试，用 `/api/analysis/tasks`
+- 要做“立刻看结果”的轻量体验，才考虑 `/api/analysis/execute`
+
+### 重分析流程
+
+- 接口：`POST /api/analysis/tasks/{taskId}/reanalyze`
+- 仅 `FAILED` 任务允许调用
+- 可选请求体：`{"query": "新的分析问题"}`
+- 复用原 `taskId`
+- 前端应复用原任务卡片，不要新建本地任务项
+- 调用后要清空旧 SQL / 旧图表 / 旧错误展示，等待新进度覆盖
+
+### 任务管理能力
+
+- 任务列表：`GET /api/analysis/tasks`
+- 任务详情：`GET /api/analysis/tasks/{taskId}`
+- 手动重命名：`PATCH /api/analysis/tasks/{taskId}/name`
+- LLM 自动命名：`POST /api/analysis/tasks/{taskId}/name/llm`
+- 删除任务：`DELETE /api/analysis/tasks/{taskId}`
 
 ---
 
-## 7. Pinia 设计（AI 代码生成时遵守）
+## 6. Pinia 设计建议
 
 ### `useAuthStore`
 
-- 状态：`profile`、`isAuthenticated`、`isReady`
-- 动作：`bootstrap`、`loginByPassword`、`loginByCode`、`logout`、`uploadAvatar`、`updateMe`
-- 字段：`profile.avatar` 可直接用于头像展示（为空时前端走默认头像）
+- 状态：`profile`、`roles`、`isAuthenticated`、`isReady`
+- 动作：`bootstrap`、`loginByPassword`、`loginByCode`、`logout`、`uploadAvatar`、`changePassword`
 
 ### `useAnalysisStore`
 
 - 状态：`taskList`、`taskDetailMap`、`trackingMap`
-- 动作：`createTask`、`reanalyzeTask`、`trackTask`、`stopTracking`、`fetchTaskDetail`、`fetchTaskList`、`renameTask`、`deleteTask`
-- 规则：SSE 更新“过程态”，详情接口覆盖“最终态”
-
-分析任务管理约定：
-
-- `AnalysisTaskSummaryView` / `AnalysisTaskDetailView` 包含 `name` 字段，可直接用于列表标题与详情头部。
-- 重命名接口：`PATCH /api/analysis/tasks/{taskId}/name`，请求体 `AnalysisTaskRenameInput`（`name` 非空）。
-- 删除接口：`DELETE /api/analysis/tasks/{taskId}`，成功后前端应从本地列表移除并停止对应 SSE 跟踪。
-- 重分析接口：`POST /api/analysis/tasks/{taskId}/reanalyze`，仅 `FAILED` 任务可调用，成功后仍使用原 `taskId` 跟踪。
-
-重分析按钮交互建议：
-
-- 仅在 `FAILED` 状态显示“重新分析”。
-- 点击后立即禁用按钮，直到收到首个新进度或详情刷新为 `PENDING/RUNNING`。
-- 如果返回“仅失败任务支持重新分析”，提示后刷新详情。
-- 如果返回 401，走统一登录失效处理（清会话并跳转登录页）。
+- 动作：`createTask`、`trackTask`、`stopTracking`、`fetchTaskList`、`fetchTaskDetail`、`reanalyzeTask`、`renameTask`、`renameTaskByLlm`、`deleteTask`
+- 规则：SSE 更新过程态，详情接口覆盖最终态
 
 ### `useDataSourceStore`
 
-- 状态：`list`、`detail`、`loading`
-- 动作：`fetchList`、`fetchDetail`、`create`、`update`、`activate`、`deactivate`
+- 状态：`list`、`detailMap`、`loading`
+- 动作：`fetchList`、`fetchDetail`、`create`、`update`、`activate`、`deactivate`、`refreshSchema`
 
-数据源创建/编辑约定：
+### `useAdminDashboardStore`
 
-- 创建数据源时，`schemaInfo` 为可选字段，前端默认不传或传空。
-- 后端会在创建成功后自动探测库表结构并回填 `schemaInfo`。
-- 编辑数据源时，后端会忽略请求体中的 `schemaInfo`，防止误传覆盖。
-- 仅在需要强制刷新结构时，调用更新接口并追加查询参数 `refreshSchemaOnly=true`。
-- UI 建议提供“刷新结构”入口：`PUT /api/data-sources/{id}?refreshSchemaOnly=true` 后重新拉取详情。
-
-用户头像上传约定：
-
-- 上传接口：`POST /api/user/avatar`，`Content-Type: multipart/form-data`。
-- 表单字段名固定为 `file`，上传成功返回最新 `UserMeResponse`。
-- 后端返回 `avatar` 直链。
-- 同内容文件会复用对象链接，前端不需要自行做去重。
+- 状态：`dashboard`、`loading`、`query`
+- 动作：`fetchDashboard(days, recentFailureLimit)`
+- 参数约束：`days` 有效范围 `1..90`，`recentFailureLimit` 有效范围 `1..20`
 
 ---
 
-## 8. ECharts 渲染约定
+## 7. 数据源表单约定
 
-- 类型从 Jimmer 模型读取（`EChartsVisualization`）。
-- 后端给的 `option` 直接渲染，不做大改写。
-- 页面仅做兜底：空数据、容器 resize、异常 option 提示。
+### 用户侧接口
+
+- `POST /api/data-sources`
+- `GET /api/data-sources`
+- `GET /api/data-sources/{id}`
+- `PUT /api/data-sources/{id}`
+- `PATCH /api/data-sources/{id}/activate`
+- `PATCH /api/data-sources/{id}/deactivate`
+
+### 表单行为
+
+- `connectionConfig` 是 `List<Map<String, String>>`，不是普通对象。
+- 推荐前端维护键值对数组，再序列化提交。
+- 创建时 `schemaInfo` 可以不传。
+- 更新时即使传了 `schemaInfo`，用户侧服务也会忽略它。
+- 强制刷新表结构时，调用 `PUT /api/data-sources/{id}?refreshSchemaOnly=true`。
+- 新创建的数据源默认启用。
+
+### 支持的数据源类型
+
+- 已支持：`POSTGRESQL`、`MYSQL`
+- 枚举存在但未接通：`CSV`、`EXCEL`
+
+### 常用配置示例
+
+PostgreSQL：
+
+```json
+[
+  {"host": "127.0.0.1"},
+  {"port": "5432"},
+  {"database": "analytics"},
+  {"username": "postgres"},
+  {"password": "secret"},
+  {"schema": "public"}
+]
+```
+
+MySQL：
+
+```json
+[
+  {"host": "127.0.0.1"},
+  {"port": "3306"},
+  {"database": "sales"},
+  {"username": "root"},
+  {"password": "secret"},
+  {"params": "serverTimezone=UTC"},
+  {"queryTimeout": "30"}
+]
+```
+
+---
+
+## 8. 管理端接入
+
+### 管理端接口分组
+
+- 任务管理：`/api/admin/analysis-tasks`
+- 数据源管理：`/api/admin/data-sources`
+- 角色管理：`/api/admin/roles`
+- 用户管理：`/api/admin/users`
+- 看板：`/api/admin/visualization/dashboard`
+
+### 管理端页面建议
+
+1. `dashboard`：总览卡片、任务趋势、状态分布、最近失败任务
+2. `analysis-tasks`：分页列表、失败任务修正、删除失败任务
+3. `data-sources`：分页列表、查看归属用户、管理员代创建/更新
+4. `users`：分页列表、创建、更新角色和启用状态
+5. `roles`：角色 CRUD
+
+### 看板接口说明
+
+`GET /api/admin/visualization/dashboard?days=7&recentFailureLimit=5`
+
+响应包含：
+
+- `totals`
+- `taskStatusDistribution`
+- `dataSourceTypeDistribution`
+- `taskTrend`
+- `dataSourceActivity`
+- `taskExecution`
+- `recentFailures`
+
+---
+
+## 9. ECharts 渲染约定
+
+- 后端返回 `visualizations[*].option`，前端直接喂给 ECharts。
+- 页面只做容器尺寸、空数据和异常 option 兜底。
+- 不要在前端二次重写后端 `dataset` / `series.encode`，否则容易和服务端策略漂移。
 
 任务详情页建议分区：
 
-1. 任务概览（状态/耗时/原始问题）
-2. 阶段轨迹（时间线）
-3. SQL + 洞察
-4. 图表区（多图）
-
----
-
-## 9. 给前端 AI 的执行清单
-
-1. 先接入 Jimmer `services` 与 `model`，禁止手写重复 DTO。
-2. 完成 `authStore.bootstrap()` 并打通登录态守卫。
-3. 完成“创建任务 -> SSE 订阅 -> 终态收敛”闭环。
-4. 完成“失败任务原地重分析（同 taskId）-> SSE 再跟踪 -> 终态收敛”闭环。
-5. 用 `AnalysisStatus` 枚举驱动任务 UI 状态标签。
-6. 任务详情页使用后端 `option` 渲染 ECharts。
+1. 任务概览
+2. 阶段时间线
+3. SQL / 原始问题 / 错误信息
+4. 洞察文本
+5. 图表区
 
 ---
 
 ## 10. 常见坑位
 
-- 只依赖 SSE 不轮询：断线后可能漏终态。
-- 页面离开不释放 SSE：会造成重复订阅和内存泄漏。
-- 本地推断成功：应以任务详情接口结果为最终准。
-- 手写类型覆盖生成类型：后续后端字段变更会导致双份类型漂移。
-- 创建数据源强制手填 `schemaInfo`：会增加录入成本且易过期，当前应以后端自动探测为主。
-- 重分析后新建本地任务项：会造成同一任务重复显示。应复用原任务项并覆盖状态与结果。
-
----
-
-## 11. 联调顺序（建议）
-
-1. `login -> me -> logout`
-2. 数据源列表/详情/编辑
-3. 创建分析任务
-4. SSE 接入（`connected`/`task-progress`/`onSuccess`）
-5. 任务详情 + ECharts
-
+- 只依赖 SSE，不做详情兜底轮询
+- 重分析后新建任务卡片，导致同一任务重复显示
+- 把 `/api/analysis/execute` 当正式任务流入口
+- 把 `PATCH /api/user/me` 当成完整资料编辑接口
+- 手写 DTO 覆盖 Jimmer 生成类型
+- 创建或编辑数据源时把 `connectionConfig` 误发成普通对象
+- 页面离开后不释放 SSE，导致重复订阅和内存泄漏
