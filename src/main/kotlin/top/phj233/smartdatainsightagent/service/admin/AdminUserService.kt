@@ -136,13 +136,6 @@ class AdminUserService(
     private fun toMeResponse(userId: Long): UserMeResponse {
         val user = userRepository.findMeById(userId)
             ?: throw UserException.userNotFound("用户不存在: $userId")
-        return UserMeResponse(
-            id = user.id,
-            username = user.username,
-            email = user.email,
-            avatar = user.avatar,
-            enabled = user.enabled,
-            roles = user.roles.map { it.name }
-        )
+        return UserMeResponse(user, user.roles.map { it.name })
     }
 }

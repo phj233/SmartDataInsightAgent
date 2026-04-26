@@ -100,6 +100,8 @@ class AdminUserControllerTest {
             username = "new_admin_user",
             email = "new@example.com",
             avatar = null,
+            createdTimeStamp = 1L,
+            modifiedTimeStamp = 2L,
             enabled = true,
             roles = listOf("ADMIN")
         )

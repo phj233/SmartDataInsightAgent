@@ -217,6 +217,8 @@ class AdminUserServiceTest {
         this.email = email
         this.avatar = avatar
         this.enabled = enabled
+        createdTimeStamp = 1L
+        modifiedTimeStamp = 2L
         roles.forEachIndexed { index, roleName ->
             roles().addBy {
                 this.id = index + 1L
