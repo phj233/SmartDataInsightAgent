@@ -6,11 +6,11 @@ import cn.dev33.satoken.stp.StpUtil
 import jakarta.servlet.DispatcherType
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
-import org.springframework.http.HttpMethod
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.http.HttpMethod
 import org.springframework.stereotype.Component
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
@@ -95,11 +95,6 @@ class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
         loginId: Any?,
         loginType: String?
     ): List<String?>? {
-        logger.info("""
-            -----已进入 StpInterFaceImpl.getRoleList 方法-----
-            loginId: $loginId - loginType: $loginType
-            tokenInfo： ${StpUtil.getTokenInfo()}
-            """.trimIndent())
         val userId = when (loginId) {
             is Long -> loginId
             is Number -> loginId.toLong()
@@ -108,7 +103,7 @@ class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
         }
 
         if (userId == null) {
-            logger.warn("无法解析登录ID为Long, loginId={}, loginType={}", loginId, loginType)
+            logger.warn("[SaTokenConfig]无法解析登录 ID 的类型，loginId={}, type={}", loginId, loginId?.javaClass)
             return emptyList()
         }
 
@@ -117,7 +112,7 @@ class StpInterFaceImpl(val userRepository: UserRepository): StpInterface{
                 role.name
             }
         }.also {
-            logger.info("${StpUtil.getLoginId()} 用户角色列表：$it")
+            logger.info("[SaTokenConfig]用户角色列表，userId={}, roles={}", userId, it)
             return it
         }
     }
