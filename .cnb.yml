@@ -4,8 +4,8 @@
 # https://cnb.cool/phj233/env/-/blob/main/sdia.yml
 # 必填部署变量：DEPLOY_HOST, DEPLOY_USER
 # 认证变量：DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD
-# 运行时变量值来自 CNB imports。
-# 本地 sdia.yml 仅作为变量名清单，用于生成容器 env 文件。
+# 应用变量值来自 CNB imports。
+# 容器 env 文件中的应用变量名从 application.yml 的 ${ENV_NAME} 占位符自动提取。
 master:
   push:
     - name: docker-build-push-and-ssh-deploy
@@ -60,14 +60,14 @@ master:
             - name: ssh_deploy
               script: |
                 set -e
-                : "${DEPLOY_HOST:?Missing DEPLOY_HOST}"
-                : "${DEPLOY_USER:?Missing DEPLOY_USER}"
+                : "${DEPLOY_HOST:?缺少 DEPLOY_HOST}"
+                : "${DEPLOY_USER:?缺少 DEPLOY_USER}"
                 if [ -z "${DEPLOY_SSH_PRIVATE_KEY:-}" ] && [ -z "${DEPLOY_PASSWORD:-}" ]; then
                   echo "缺少认证配置：请设置 DEPLOY_SSH_PRIVATE_KEY 或 DEPLOY_PASSWORD" >&2
                   exit 1
                 fi
-                if [ ! -f sdia.yml ]; then
-                  echo "缺少本地 sdia.yml 变量名清单文件" >&2
+                if [ ! -f src/main/resources/application.yml ]; then
+                  echo "缺少应用配置文件：src/main/resources/application.yml" >&2
                   exit 1
                 fi
 
@@ -84,18 +84,26 @@ master:
                 DOCKER_NETWORK="${DOCKER_NETWORK:-nginx}"
                 DOCKER_STATIC_IP="${DOCKER_STATIC_IP:-172.18.0.5}"
                 DOCKER_NETWORK_SUBNET="${DOCKER_NETWORK_SUBNET:-172.18.0.0/16}"
-                APP_ENV_CONTENT="$(
+                APP_ENV_VARS="$(
                   awk '
-                    /^[A-Za-z_][A-Za-z0-9_]*:[[:space:]]*/ {
-                      sub(/:.*/, "", $0)
-                      print $0
+                    {
+                      while (match($0, /\$\{[A-Z_][A-Z0-9_]*(:[^}]*)?\}/)) {
+                        token = substr($0, RSTART + 2, RLENGTH - 3)
+                        sub(/:.*/, "", token)
+                        print token
+                        $0 = substr($0, RSTART + RLENGTH)
+                      }
                     }
-                  ' sdia.yml | while IFS= read -r VAR_NAME; do
-                    case "${VAR_NAME}" in
-                      DEPLOY_HOST|DEPLOY_USER|DEPLOY_SSH_PRIVATE_KEY|DEPLOY_PASSWORD|DEPLOY_PORT|DOCKER_NETWORK|DOCKER_STATIC_IP|DOCKER_NETWORK_SUBNET|APP_CONTAINER_NAME|APP_PORT|CONTAINER_PORT|IMAGE_NAME|DEPLOY_IMAGE_NAME|IMAGE_TAG)
-                        continue
-                        ;;
-                    esac
+                  ' src/main/resources/application.yml | sort -u
+                )"
+                if [ -z "${APP_ENV_VARS}" ]; then
+                  echo "未在 application.yml 中找到应用环境变量占位符" >&2
+                  exit 1
+                fi
+
+                APP_ENV_CONTENT="$(
+                  printf '%s\n' "${APP_ENV_VARS}" | while IFS= read -r VAR_NAME; do
+                    [ -n "${VAR_NAME}" ] || continue
 
                     eval "VAR_IS_SET=\${${VAR_NAME}+x}"
                     if [ -z "${VAR_IS_SET}" ]; then
